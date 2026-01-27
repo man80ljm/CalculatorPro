@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QButtonGroup, QCheckBox, QSizePolicy)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core import GradeProcessor
+from io_app.excel_templates import create_forward_template, create_reverse_template
 from relation_table import RelationTableSetupDialog, RelationTableEditorDialog
 from ui_app.settings_dialog import SettingsDialog
 
@@ -675,12 +676,41 @@ class GradeAnalysisApp(QMainWindow):
         self.save_config()
 
     def open_template_download(self):
-        """下载模板后的提示"""
+        """下载模板并保存到 outputs 目录"""
         dialog = TemplateDownloadDialog(self)
-        if dialog.exec():
-            count = dialog.student_count
-            mode = "正向" if self.tabs.currentIndex() == 0 else "逆向"
-            QMessageBox.information(self, "下载成功", f"已生成{mode}模式模板，包含{count}名学生。")
+        if not dialog.exec():
+            return
+        count = dialog.student_count
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        try:
+            if self.tabs.currentIndex() == 0:
+                if not self.relation_payload:
+                    QMessageBox.warning(
+                        self,
+                        "提示",
+                        "请先填写“课程考核与课程目标对应关系”。",
+                    )
+                    return
+                outputs_dir = os.path.join(base_dir, "outputs")
+                os.makedirs(outputs_dir, exist_ok=True)
+                relation_json_path = os.path.join(outputs_dir, "relation_table.json")
+                with open(relation_json_path, "w", encoding="utf-8") as f:
+                    json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
+                output_path = create_forward_template(base_dir, count, relation_json_path)
+            else:
+                output_path = create_reverse_template(base_dir, count)
+
+            QMessageBox.information(
+                self,
+                "下载成功",
+                f"模板已生成：{output_path}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "错误",
+                f"模板生成失败：{str(exc)}",
+            )
 
     def select_file(self):
         """选择 Excel 成绩单"""
@@ -728,21 +758,22 @@ class GradeAnalysisApp(QMainWindow):
                 self.status_label,
                 self.input_file,
                 course_description=self.course_description,
-                objective_requirements=self.objective_requirements
+                objective_requirements=self.objective_requirements,
+                relation_payload=self.relation_payload
             )
 
             if hasattr(self.processor, 'set_noise_config') and self.noise_config:
                 self.processor.set_noise_config(self.noise_config)
-            overall = self.processor.process_grades(
-                self.num_objectives,
-                [float(w.text()) for w in self.weight_inputs], 
-                self.usual_ratio,
-                self.midterm_ratio,
-                self.final_ratio,
-                s_mode,
-                d_mode,
-                progress_callback=lambda idx: self.progress_bar.setValue(idx)
-            )
+            if self.tabs.currentIndex() == 0:
+                overall = self.processor.process_forward_grades(
+                    spread_mode=s_mode,
+                    distribution=d_mode,
+                )
+            else:
+                overall = self.processor.process_reverse_grades(
+                    spread_mode=s_mode,
+                    distribution=d_mode,
+                )
             self.status_label.setText(f"处理完成，总达成度: {overall}")
             QMessageBox.information(self, "成功", "成绩处理已完成，请导出结果。")
         except Exception as e:

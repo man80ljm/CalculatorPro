@@ -2,17 +2,20 @@ import os
 import numpy as np
 import pandas as pd
 import json
+import re
 import requests
 from typing import List, Dict,Callable, Optional
-from openpyxl.styles import Alignment, PatternFill, Font
+from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 import openpyxl
+from openpyxl.utils.dataframe import dataframe_to_rows
+from apply_noise import GradeReverseEngine
 from utils import normalize_score, get_grade_level, calculate_final_score, calculate_achievement_level, adjust_column_widths
 import time
 
 class GradeProcessor:
-    def __init__(self, course_name_input, num_objectives_input, weight_inputs, usual_ratio_input, 
-                 midterm_ratio_input, final_ratio_input, status_label, input_file, 
-                 course_description="", objective_requirements=None):
+    def __init__(self, course_name_input, num_objectives_input, weight_inputs, usual_ratio_input,
+                 midterm_ratio_input, final_ratio_input, status_label, input_file,
+                 course_description="", objective_requirements=None, relation_payload=None):
         self.course_name_input = course_name_input
         self.num_objectives_input = num_objectives_input
         self.weight_inputs = weight_inputs
@@ -25,6 +28,9 @@ class GradeProcessor:
         self.objective_requirements = objective_requirements or []
         self.previous_achievement_data = None
         self.api_key = None
+        self.relation_payload = relation_payload or {}
+        self.noise_config = None
+        self.reverse_engine = GradeReverseEngine()
 
     def test_deepseek_api(self, api_key: str) -> str:
         """测试 DeepSeek API 连接"""
@@ -510,6 +516,592 @@ class GradeProcessor:
             raise
 
         return total_achievement
+
+
+    def set_noise_config(self, config: dict):
+        """\u8bbe\u7f6e\u566a\u58f0\u914d\u7f6e"""
+        self.noise_config = config or None
+
+    def set_relation_payload(self, payload: dict):
+        """\u8bbe\u7f6e\u8bfe\u7a0b\u8003\u6838\u4e0e\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb"""
+        self.relation_payload = payload or {}
+
+
+    def _safe_filename(self, name: str) -> str:
+        """???????????"""
+        if not name:
+            return "\u6210\u7ee9\u660e\u7ec6"
+        safe = re.sub(r"[\\\\/:*\"<>|]", "_", name).strip()
+        return safe or "\u6210\u7ee9\u660e\u7ec6"
+
+    def _get_links(self):
+        payload = self.relation_payload or {}
+        return payload.get("links", [])
+
+    def _normalize_weights(self, weights):
+        total = sum(weights)
+        if total <= 0:
+            return [0 for _ in weights]
+        return [w / total for w in weights]
+
+    def _validate_forward_headers(self, file_path: str):
+        """\u6821\u9a8c\u6b63\u5411\u6a21\u677f\u8868\u5934\u662f\u5426\u4e0e\u5173\u7cfb\u8868\u4e00\u81f4"""
+        if not self.relation_payload:
+            raise ValueError("\u8bf7\u5148\u586b\u5199\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb")
+
+        wb = openpyxl.load_workbook(file_path)
+        ws = wb.active
+        max_col = ws.max_column
+
+        def header_value(row, col):
+            cell = ws.cell(row=row, column=col)
+            if cell.value is not None:
+                return str(cell.value).strip()
+            for rng in ws.merged_cells.ranges:
+                if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
+                    v = ws.cell(rng.min_row, rng.min_col).value
+                    return str(v).strip() if v is not None else ""
+            return ""
+
+        row1 = [header_value(1, c) for c in range(1, max_col + 1)]
+        row2 = [header_value(2, c) for c in range(1, max_col + 1)]
+
+        if not row2:
+            raise ValueError("\u6b63\u5411\u6a21\u677f\u7b2c1\u5217\u5fc5\u987b\u4e3a\u201c\u59d3\u540d\u201d")
+        if row2[0] != "\u59d3\u540d":
+            if not (row2[0] == "" and row1[0] == "\u59d3\u540d"):
+                raise ValueError("\u6b63\u5411\u6a21\u677f\u7b2c1\u5217\u5fc5\u987b\u4e3a\u201c\u59d3\u540d\u201d")
+
+        links = self._get_links()
+        expected_methods = []
+        expected_links = []
+        for link in links:
+            methods = link.get("methods", [])
+            if not methods:
+                methods = [{"name": "\u65e0"}]
+            for m in methods:
+                expected_methods.append((m.get("name") or "\u65e0").strip())
+                expected_links.append((link.get("name") or "").strip())
+
+        actual_methods = [str(v).strip() for v in row2[1:1+len(expected_methods)]]
+        if actual_methods != expected_methods:
+            raise ValueError("\u6b63\u5411\u6a21\u677f\u4e8c\u7ea7\u8868\u5934\u4e0e\u5173\u7cfb\u8868\u4e0d\u4e00\u81f4\uff0c\u8bf7\u91cd\u65b0\u4e0b\u8f7d\u6a21\u677f")
+
+        actual_links = [str(v).strip() for v in row1[1:1+len(expected_links)]]
+        if actual_links != expected_links:
+            raise ValueError("\u6b63\u5411\u6a21\u677f\u4e00\u7ea7\u8868\u5934\u4e0e\u5173\u7cfb\u8868\u4e0d\u4e00\u81f4\uff0c\u8bf7\u91cd\u65b0\u4e0b\u8f7d\u6a21\u677f")
+
+    def _validate_reverse_headers(self, df: pd.DataFrame):
+        """\u6821\u9a8c\u9006\u5411\u6a21\u677f\u8868\u5934"""
+        links = self._get_links()
+        if links:
+            expected = ["\u59d3\u540d"] + [link.get("name", "").strip() for link in links]
+        else:
+            expected = ["\u59d3\u540d", "\u5e73\u65f6\u8003\u6838", "\u671f\u4e2d\u8003\u6838", "\u671f\u672b\u8003\u6838"]
+
+        missing = [c for c in expected if c not in df.columns]
+        if missing:
+            raise ValueError(f"\u9006\u5411\u6a21\u677f\u7f3a\u5c11\u8868\u5934: {', '.join(missing)}")
+
+    def process_forward_grades(self, spread_mode='medium', distribution='uniform'):
+        """\u6b63\u5411\u6210\u7ee9\u5bfc\u5165\u4e0e\u6821\u9a8c\uff0c\u8f93\u51fa\u8be6\u60c5\u6210\u7ee9\u660e\u7ec6\u8868"""
+        self._validate_forward_headers(self.input_file)
+        df = pd.read_excel(self.input_file, header=1)
+        df = df.fillna(0)
+
+        # ??????????????????
+        cols = list(df.columns)
+        if cols:
+            first = str(cols[0]) if cols[0] is not None else ""
+            if first.startswith("Unnamed") or first.strip() == "" or first == "nan":
+                cols[0] = "\u59d3\u540d"
+                df.columns = cols
+
+        if "\u59d3\u540d" not in df.columns:
+            raise ValueError("\u6b63\u5411\u6a21\u677f\u7f3a\u5c11\u201c\u59d3\u540d\u201d\u5217")
+
+        links = self._get_links()
+        obj_count = int(self.relation_payload.get("objectives_count", 0) or 0)
+        if obj_count <= 0:
+            obj_keys = set()
+            for link in links:
+                for method in link.get("methods", []):
+                    obj_keys.update(method.get("supports", {}).keys())
+            obj_count = len(obj_keys)
+        obj_keys = [f"\u8bfe\u7a0b\u76ee\u6807{i+1}" for i in range(obj_count)]
+        obj_headers = [f"\u76ee\u6807{i+1}" for i in range(obj_count)]
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "\u6210\u7ee9\u660e\u7ec6"
+
+        header = ["\u59d3\u540d", "\u8003\u6838\u73af\u8282", "\u8003\u6838\u65b9\u5f0f"] + obj_headers + ["\u5c0f\u8ba1", "\u5408\u8ba1", "\u7b49\u7ea7"]
+        ws.append(header)
+
+        def format_link_label(name, ratio):
+            pct = int(round(ratio * 100))
+            if "\u8003\u6838" in name:
+                base = name.replace("\u8003\u6838", "")
+                return f"{base}\n\u8003\u6838\n({pct}%)"
+            return f"{name}\n({pct}%)"
+
+        def grade_label(score):
+            if score >= 90:
+                return "\u4f18\u79c0"
+            if score >= 80:
+                return "\u826f\u597d"
+            if score >= 70:
+                return "\u4e2d\u7b49"
+            if score >= 60:
+                return "\u53ca\u683c"
+            return "\u4e0d\u53ca\u683c"
+
+        row_cursor = 2
+        total_scores = []
+
+        for _, row in df.iterrows():
+            name = row.get("\u59d3\u540d")
+            if pd.isna(name) or str(name).strip() == "":
+                continue
+            student_start = row_cursor
+            total_score = 0.0
+            total_obj_scores = [0.0 for _ in range(obj_count)]
+
+            for link in links:
+                link_name = link.get("name", "")
+                link_ratio = float(link.get("ratio", 0))
+                methods = link.get("methods", []) or [{"name": "\u65e0", "supports": {}, "subtotal": 1.0}]
+
+                link_label = format_link_label(link_name, link_ratio)
+                link_start = row_cursor
+                link_obj_scores = [0.0 for _ in range(obj_count)]
+                link_score = 0.0
+
+                for idx, m in enumerate(methods):
+                    m_name = m.get("name", "\u65e0")
+                    score = row.get(m_name, 0)
+                    try:
+                        score = float(score)
+                    except Exception:
+                        score = 0.0
+
+                    supports = m.get("supports", {}) or {}
+                    support_vals = [float(supports.get(k, 0)) for k in obj_keys]
+                    # ??????????????
+                    obj_scores = [score * v for v in support_vals]
+
+                    for i, v in enumerate(obj_scores):
+                        link_obj_scores[i] += v
+
+                    method_weight = float(m.get("subtotal", 0))
+                    link_score += score * method_weight
+
+                    method_subtotal = sum(obj_scores)
+                    row_values = ["", link_label if row_cursor == link_start else "", m_name]
+                    row_values += [round(v, 2) for v in obj_scores]
+                    row_values += [round(method_subtotal, 2), "", ""]
+                    ws.append(row_values)
+                    row_cursor += 1
+
+                # ?????
+                total_row = ["", link_label if row_cursor == link_start else "", "\u73af\u8282\u5408\u8ba1"]
+                total_row += [round(v, 2) for v in link_obj_scores]
+                total_row += ["", round(link_score, 2), ""]
+                ws.append(total_row)
+                row_cursor += 1
+
+                ws.merge_cells(start_row=link_start, start_column=2, end_row=row_cursor - 1, end_column=2)
+
+                total_score += link_score * link_ratio
+                for i, v in enumerate(link_obj_scores):
+                    total_obj_scores[i] += v * link_ratio
+
+            grade = grade_label(total_score)
+            final_row = ["", "100%", "\u8bfe\u7a0b\u603b\u8bc4"]
+            final_row += [round(v, 2) for v in total_obj_scores]
+            final_row += ["", round(total_score, 2), grade]
+            ws.append(final_row)
+            row_cursor += 1
+
+            # ??????????
+            ws.cell(row=student_start, column=1, value=name)
+            grade_col = len(header)
+            ws.cell(row=student_start, column=grade_col, value=grade)
+
+            ws.merge_cells(start_row=student_start, start_column=1, end_row=row_cursor - 1, end_column=1)
+            ws.merge_cells(start_row=student_start, start_column=grade_col, end_row=row_cursor - 1, end_column=grade_col)
+            total_scores.append(total_score)
+
+        # ????? + ??
+        align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        thin = Side(style='thin')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in r:
+                cell.alignment = align
+                cell.border = border
+
+
+        # ???????
+        stats_ws = wb.create_sheet(title="\u8bfe\u7a0b\u6210\u7ee9\u7edf\u8ba1")
+        total_count = len(total_scores)
+        max_score = round(max(total_scores), 2) if total_scores else 0
+        min_score = round(min(total_scores), 2) if total_scores else 0
+        avg_score = round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
+
+        grade_bins = [
+            (90, 100, "\u4f18\u79c0"),
+            (80, 89.999, "\u826f\u597d"),
+            (70, 79.999, "\u4e2d\u7b49"),
+            (60, 69.999, "\u53ca\u683c"),
+            (0, 59.999, "\u4e0d\u53ca\u683c"),
+        ]
+        counts = []
+        ratios = []
+        for lo, hi, _ in grade_bins:
+            c = sum(1 for s in total_scores if lo <= s <= hi)
+            counts.append(c)
+            ratios.append(round(c / total_count, 4) if total_count else 0)
+
+        def _fmt_ratio(val):
+            try:
+                val = float(val)
+            except Exception:
+                val = 0.0
+            pct = val * 100 if val <= 1 else val
+            if abs(pct - round(pct)) < 0.01:
+                return f"{int(round(pct))}%"
+            return f"{pct:.2f}%"
+
+        composition_parts = []
+        for link in links:
+            name = link.get("name", "")
+            ratio = link.get("ratio", 0)
+            if name:
+                composition_parts.append(f"{name}\uff08{_fmt_ratio(ratio)}\uff09")
+        composition_text = " + ".join(composition_parts)
+
+        stats_ws.append(["\u6210\u7ee9\u6784\u6210", composition_text, "", "", "", ""])
+        stats_ws.merge_cells("B1:F1")
+        stats_ws.append(["\u6700\u9ad8\u6210\u7ee9", max_score, "\u6700\u4f4e\u6210\u7ee9", min_score, "\u5e73\u5747\u6210\u7ee9", avg_score])
+        stats_ws.append([
+            "\u6210\u7ee9\u7b49\u7ea7",
+            "90-100\n(\u4f18\u79c0)",
+            "80-89\n(\u826f\u597d)",
+            "70-79\n(\u4e2d\u7b49)",
+            "60-69\n(\u53ca\u683c)",
+            "<60\n(\u4e0d\u53ca\u683c)",
+        ])
+        stats_ws.append(["\u4eba\u6570"] + counts)
+        stats_ws.append(["\u5360\u8003\u6838\u4eba\u6570\u7684\u6bd4\u4f8b"] + [f"{r*100:.2f}%" for r in ratios])
+
+        # ??
+        stat_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        stat_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for r in stats_ws.iter_rows(min_row=1, max_row=stats_ws.max_row, min_col=1, max_col=stats_ws.max_column):
+            for cell in r:
+                cell.alignment = stat_align
+                cell.border = stat_border
+
+        stats_ws.row_dimensions[3].height = 36
+        stats_ws.column_dimensions["A"].width = 18
+        for col in ["B", "C", "D", "E", "F"]:
+            stats_ws.column_dimensions[col].width = 14
+
+
+        # EVAL_TABLE_5
+        eval_ws = wb.create_sheet(title="课程目标达成情况评价结果")
+        eval_headers = ["课程分目标", "考核环节", "分权重", "分值/满分", "学生实际得分平均分", "分目标达成值", "上一轮教学分目标达成值"]
+        eval_ws.append(eval_headers)
+
+        # ??????????
+        method_avgs = {}
+        for link in links:
+            for m in link.get("methods", []) or []:
+                m_name = m.get("name")
+                if not m_name:
+                    continue
+                if m_name in df.columns:
+                    try:
+                        method_avgs[m_name] = float(df[m_name].mean())
+                    except Exception:
+                        method_avgs[m_name] = 0.0
+                else:
+                    method_avgs[m_name] = 0.0
+
+        prev_data = self.previous_achievement_data or {}
+        total_obj_weight = 0.0
+        total_obj_actual = 0.0
+
+        row_cursor = 2
+        for idx, obj_key in enumerate(obj_keys):
+            obj_name = f"课程目标{idx + 1}"
+            obj_start = row_cursor
+            obj_weight_sum = 0.0
+            obj_actual_sum = 0.0
+
+            for link in links:
+                link_name = link.get("name", "")
+                if "平时" in link_name:
+                    display_link = "平时成绩"
+                elif "期中" in link_name:
+                    display_link = "期中考核"
+                elif "期末" in link_name:
+                    display_link = "期末考核"
+                else:
+                    display_link = link_name
+
+                link_ratio = float(link.get("ratio", 0))
+                methods = link.get("methods", []) or []
+
+                support_sum = 0.0
+                actual_sum = 0.0
+                for m in methods:
+                    supports = m.get("supports", {}) or {}
+                    weight = float(supports.get(obj_key, 0))
+                    support_sum += weight
+                    m_name = m.get("name")
+                    m_avg = float(method_avgs.get(m_name, 0))
+                    actual_sum += m_avg * weight
+
+                target_weight = link_ratio * 100.0 * support_sum
+                actual_score = link_ratio * actual_sum
+
+                obj_weight_sum += target_weight
+                obj_actual_sum += actual_score
+
+                eval_ws.append([
+                    obj_name if row_cursor == obj_start else "",
+                    display_link,
+                    round(target_weight, 2),
+                    100,
+                    round(actual_score, 2),
+                    "",
+                    "",
+                ])
+                row_cursor += 1
+
+            achievement = round(obj_actual_sum / obj_weight_sum, 4) if obj_weight_sum > 0 else 0
+            prev_val = prev_data.get(obj_name, 0) if prev_data else 0
+            prev_val = 0 if prev_val is None else prev_val
+
+            eval_ws.cell(row=obj_start, column=6, value=achievement)
+            eval_ws.cell(row=obj_start, column=7, value=prev_val)
+
+            if row_cursor - 1 > obj_start:
+                eval_ws.merge_cells(start_row=obj_start, start_column=1, end_row=row_cursor - 1, end_column=1)
+                eval_ws.merge_cells(start_row=obj_start, start_column=6, end_row=row_cursor - 1, end_column=6)
+                eval_ws.merge_cells(start_row=obj_start, start_column=7, end_row=row_cursor - 1, end_column=7)
+
+            total_obj_weight += obj_weight_sum
+            total_obj_actual += obj_actual_sum
+
+        total_attainment = round(total_obj_actual / total_obj_weight, 4) if total_obj_weight > 0 else 0
+        expected_attainment = 0.7
+        prev_total = 0
+        for key in ["课程目标总达成值", "课程总目标", "课程总达成值", "total_value"]:
+            if key in prev_data:
+                prev_total = prev_data.get(key, 0) or 0
+                break
+
+        def _append_summary(label, value=None, prev=None):
+            display_val = value if value is not None else (prev if prev is not None else 0)
+            eval_ws.append([label, "", "", "", "", display_val, ""])
+            row_idx = eval_ws.max_row
+            eval_ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
+            eval_ws.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=7)
+
+        _append_summary("课程目标达成值", total_attainment)
+        _append_summary("课程目标达成期望值", expected_attainment)
+        _append_summary("上一轮教学课程目标达成值", None, prev_total)
+
+        eval_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        eval_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for r in eval_ws.iter_rows(min_row=1, max_row=eval_ws.max_row, min_col=1, max_col=eval_ws.max_column):
+            for cell in r:
+                cell.alignment = eval_align
+                cell.border = eval_border
+
+        eval_ws.column_dimensions["A"].width = 14
+        eval_ws.column_dimensions["B"].width = 12
+        eval_ws.column_dimensions["C"].width = 10
+        eval_ws.column_dimensions["D"].width = 12
+        eval_ws.column_dimensions["E"].width = 18
+        eval_ws.column_dimensions["F"].width = 12
+        eval_ws.column_dimensions["G"].width = 16
+
+        output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"{self._safe_filename(self.course_name_input.text())}\u6210\u7ee9\u660e\u7ec6.xlsx")
+        wb.save(output_path)
+
+        return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
+
+    def process_reverse_grades(self, spread_mode='medium', distribution='uniform'):
+        """\u9006\u5411\u6210\u7ee9\u5bfc\u5165\u4e0e\u751f\u6210\u660e\u7ec6"""
+        df = pd.read_excel(self.input_file)
+        df = df.fillna(0)
+        self._validate_reverse_headers(df)
+
+        links = self._get_links()
+        if not links:
+            links = [
+                {"name": "\u5e73\u65f6\u8003\u6838", "ratio": 0.0, "methods": []},
+                {"name": "\u671f\u4e2d\u8003\u6838", "ratio": 0.0, "methods": []},
+                {"name": "\u671f\u672b\u8003\u6838", "ratio": 0.0, "methods": []},
+            ]
+
+        detail_rows = []
+        total_scores = []
+
+        dist_map = {
+            "normal": "normal",
+            "left_skewed": "left_skewed",
+            "right_skewed": "right_skewed",
+            "bimodal": "bimodal",
+            "discrete": "discrete",
+            "uniform": "normal",
+        }
+        dist_type = dist_map.get(distribution, "normal")
+
+        for _, row in df.iterrows():
+            name = row.get("\u59d3\u540d")
+            if pd.isna(name) or str(name).strip() == "":
+                continue
+            row_dict = {"\u59d3\u540d": name}
+            total_score = 0.0
+
+            for link in links:
+                link_name = link.get("name", "")
+                link_ratio = float(link.get("ratio", 0))
+                link_score = row.get(link_name, 0)
+                try:
+                    link_score = float(link_score)
+                except Exception:
+                    link_score = 0.0
+
+                methods = link.get("methods", []) or [{"name": "\u65e0", "subtotal": 1.0}]
+                weights = [float(m.get("subtotal", 0)) for m in methods]
+                weights = self._normalize_weights(weights)
+
+                structure = {}
+                for m, w in zip(methods, weights):
+                    structure[m.get("name", "\u65e0")] = {"weight": w, "type": dist_type}
+
+                if structure and sum(weights) > 0:
+                    breakdown = self.reverse_engine.generate_breakdown(
+                        link_score,
+                        structure,
+                        noise_config=self.noise_config,
+                    )
+                else:
+                    breakdown = {m.get("name", "\u65e0"): 0 for m in methods}
+
+                for m in methods:
+                    m_name = m.get("name", "\u65e0")
+                    row_dict[f"{link_name}-{m_name}"] = breakdown.get(m_name, 0)
+
+                row_dict[link_name] = round(link_score, 2)
+                total_score += link_score * link_ratio
+
+            row_dict["\u603b\u8bc4"] = round(total_score, 2)
+            total_scores.append(total_score)
+            detail_rows.append(row_dict)
+
+        
+        
+
+        
+        detail_df = pd.DataFrame(detail_rows)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "\u6210\u7ee9\u660e\u7ec6"
+        for r in dataframe_to_rows(detail_df, index=False, header=True):
+            ws.append(r)
+
+        align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        thin = Side(style='thin')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in r:
+                cell.alignment = align
+                cell.border = border
+
+        stats_ws = wb.create_sheet(title="\u8bfe\u7a0b\u6210\u7ee9\u7edf\u8ba1")
+        total_count = len(total_scores)
+        max_score = round(max(total_scores), 2) if total_scores else 0
+        min_score = round(min(total_scores), 2) if total_scores else 0
+        avg_score = round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
+
+        grade_bins = [
+            (90, 100, "\u4f18\u79c0"),
+            (80, 89.999, "\u826f\u597d"),
+            (70, 79.999, "\u4e2d\u7b49"),
+            (60, 69.999, "\u53ca\u683c"),
+            (0, 59.999, "\u4e0d\u53ca\u683c"),
+        ]
+        counts = []
+        ratios = []
+        for lo, hi, _ in grade_bins:
+            c = sum(1 for s in total_scores if lo <= s <= hi)
+            counts.append(c)
+            ratios.append(round(c / total_count, 4) if total_count else 0)
+
+        def _fmt_ratio(val):
+            try:
+                val = float(val)
+            except Exception:
+                val = 0.0
+            pct = val * 100 if val <= 1 else val
+            if abs(pct - round(pct)) < 0.01:
+                return f"{int(round(pct))}%"
+            return f"{pct:.2f}%"
+
+        composition_parts = []
+        for link in links:
+            name = link.get("name", "")
+            ratio = link.get("ratio", 0)
+            if name:
+                composition_parts.append(f"{name}\uff08{_fmt_ratio(ratio)}\uff09")
+        composition_text = " + ".join(composition_parts)
+
+        stats_ws.append(["\u6210\u7ee9\u6784\u6210", composition_text, "", "", "", ""])
+        stats_ws.merge_cells("B1:F1")
+        stats_ws.append(["\u6700\u9ad8\u6210\u7ee9", max_score, "\u6700\u4f4e\u6210\u7ee9", min_score, "\u5e73\u5747\u6210\u7ee9", avg_score])
+        stats_ws.append([
+            "\u6210\u7ee9\u7b49\u7ea7",
+            "90-100\n(\u4f18\u79c0)",
+            "80-89\n(\u826f\u597d)",
+            "70-79\n(\u4e2d\u7b49)",
+            "60-69\n(\u53ca\u683c)",
+            "<60\n(\u4e0d\u53ca\u683c)",
+        ])
+        stats_ws.append(["\u4eba\u6570"] + counts)
+        stats_ws.append(["\u5360\u8003\u6838\u4eba\u6570\u7684\u6bd4\u4f8b"] + [f"{r*100:.2f}%" for r in ratios])
+
+        stat_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        stat_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for r in stats_ws.iter_rows(min_row=1, max_row=stats_ws.max_row, min_col=1, max_col=stats_ws.max_column):
+            for cell in r:
+                cell.alignment = stat_align
+                cell.border = stat_border
+
+        stats_ws.row_dimensions[3].height = 36
+        stats_ws.column_dimensions["A"].width = 18
+        for col in ["B", "C", "D", "E", "F"]:
+            stats_ws.column_dimensions[col].width = 14
+
+
+        output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"{self._safe_filename(self.course_name_input.text())}\u6210\u7ee9\u660e\u7ec6.xlsx")
+        wb.save(output_path)
+
+        return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
+
+
+
 
     def load_previous_achievement(self, file_path: str) -> None:
         """加载上一学年达成度表，处理目标数量不一致的情况"""

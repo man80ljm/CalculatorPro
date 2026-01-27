@@ -5,11 +5,11 @@ from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox
 
 
 class TemplateDownloadDialog(QDialog):
-    """模板下载弹窗"""
+    """\u6a21\u677f\u4e0b\u8f7d\u5f39\u7a97"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("模板下载")
+        self.setWindowTitle("\u6a21\u677f\u4e0b\u8f7d")
         self.setFixedWidth(380)
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "..", "calculator.ico")))
         self.setStyleSheet("""
@@ -59,8 +59,7 @@ class TemplateDownloadDialog(QDialog):
         layout.setSpacing(20)
         layout.setContentsMargins(32, 32, 32, 32)
 
-        # 标题
-        title = QLabel("下载成绩模板")
+        title = QLabel("\u4e0b\u8f7d\u6210\u7ee9\u6a21\u677f")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("""
             font-size: 18px;
@@ -70,10 +69,9 @@ class TemplateDownloadDialog(QDialog):
         """)
         layout.addWidget(title)
 
-        # 学生人数输入
         row = QHBoxLayout()
         row.setSpacing(12)
-        label = QLabel("学生人数：")
+        label = QLabel("\u5b66\u751f\u4eba\u6570\uff1a")
         label.setFixedWidth(100)
         self.input_box = QLineEdit()
         self.input_box.setValidator(QIntValidator(1, 9999, self))
@@ -84,8 +82,7 @@ class TemplateDownloadDialog(QDialog):
         row.addWidget(self.input_box)
         layout.addLayout(row)
 
-        # 提示信息
-        hint = QLabel("💡 请输入班级学生总人数")
+        hint = QLabel("\u8bf7\u586b\u5199\u73ed\u7ea7\u5b66\u751f\u603b\u4eba\u6570")
         hint.setStyleSheet("""
             font-size: 12px;
             color: #6C757D;
@@ -96,8 +93,7 @@ class TemplateDownloadDialog(QDialog):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
-        # 下载按钮
-        btn = QPushButton("📥 点击下载")
+        btn = QPushButton("\u70b9\u51fb\u4e0b\u8f7d")
         btn.setFixedHeight(44)
         btn.clicked.connect(self._on_confirm)
         layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -107,7 +103,7 @@ class TemplateDownloadDialog(QDialog):
     def _on_confirm(self):
         text = self.input_box.text().strip()
         if not text:
-            QMessageBox.warning(self, "提示", "请输入学生人数")
+            QMessageBox.warning(self, "\u63d0\u793a", "\u8bf7\u8f93\u5165\u5b66\u751f\u4eba\u6570")
             return
         self.student_count = int(text)
         self.accept()
