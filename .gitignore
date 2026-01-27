@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+venv/
+.venv/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Outputs / generated files
+outputs/
+*.tmp
+
+**/计算规则.docx
+**/课程目标达成情况评价表.docx

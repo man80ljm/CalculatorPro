@@ -1,0 +1,17 @@
+# 图形用户界面 (GUI)
+PyQt6>=6.4.0
+
+# 数据处理 (Excel 读取与分析)
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Excel 文件处理 (读写引擎)
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+
+# Word 文档处理 (核心生成库)
+python-docx>=0.8.11
+docxtpl>=0.16.0
+
+# 网络请求 (用于 DeepSeek API 调用)
+requests>=2.28.0
