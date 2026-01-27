@@ -187,7 +187,7 @@ class SettingsDialog(QDialog):
         clear_btn.clicked.connect(self._on_clear)
         btn_layout.addStretch()
         btn_layout.addWidget(save_btn)
-        btn_layout.addSpacing(225)
+        btn_layout.addSpacing(214)
         btn_layout.addWidget(clear_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
@@ -248,16 +248,52 @@ class SettingsDialog(QDialog):
         self.test_dialog.exec()
 
     def _on_save(self):
-        new_api = self.api_input.text().strip()
-        if new_api:
-            self.api_key_value = new_api
-        self.description_value = self.desc_input.toPlainText().strip()
-        self.objective_requirements = [item.text().strip() for item in self.objective_inputs]
-        self.accept()
+        try:
+            new_api = self.api_input.text().strip()
+            if new_api:
+                self.api_key_value = new_api
+            self.description_value = self.desc_input.toPlainText().strip()
+            self.objective_requirements = [item.text().strip() for item in self.objective_inputs]
+
+            parent = self.parent()
+            if parent:
+                parent.api_key = self.api_key_value
+                parent.course_description = self.description_value
+                parent.objective_requirements = self.objective_requirements
+                parent.previous_achievement_file = self.previous_achievement_file
+                if hasattr(parent, "save_config"):
+                    parent.save_config()
+
+            QMessageBox.information(self, "提示", "保存成功")
+            self.accept()
+        except Exception as exc:
+            QMessageBox.warning(self, "提示", f"保存失败：{exc}")
 
     def _on_clear(self):
-        self.desc_input.clear()
-        for item in self.objective_inputs:
-            item.clear()
-        self.file_path_label.setText("未选择文件")
-        self.previous_achievement_file = ""
+        try:
+            self.desc_input.clear()
+            for item in self.objective_inputs:
+                item.clear()
+            self.file_path_label.setText("未选择文件")
+            self.previous_achievement_file = ""
+
+            parent = self.parent()
+            if parent:
+                if hasattr(parent, "usual_ratio"):
+                    parent.usual_ratio = 0.0
+                    parent.midterm_ratio = 0.0
+                    parent.final_ratio = 0.0
+                if hasattr(parent, "relation_payload"):
+                    parent.relation_payload = None
+                if hasattr(parent, "num_objectives"):
+                    parent.num_objectives = 0
+                parent.course_description = ""
+                parent.objective_requirements = []
+                parent.previous_achievement_file = ""
+                if hasattr(parent, "save_config"):
+                    parent.save_config()
+
+            QMessageBox.information(self, "提示", "已清空")
+        except Exception as exc:
+            QMessageBox.warning(self, "提示", f"清空失败：{exc}")
+
