@@ -185,7 +185,7 @@ class TemplateDownloadDialog(QDialog):
     def validate_and_accept(self):
         text = self.input_count.text()
         if not text:
-            QMessageBox.warning(self, "提示", "请输入学生人数")
+            QMessageBox.warning(self, '\u63d0\u793a', '\u8bf7\u5148\u5728\u201c\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb\u201d\u4e2d\u8bbe\u7f6e\u8bfe\u7a0b\u76ee\u6807\u6570\u91cf')
             return
         self.student_count = int(text)
         self.accept()
@@ -320,7 +320,7 @@ class GradeAnalysisApp(QMainWindow):
         if not name and isinstance(self.course_basic_info, dict):
             name = self.course_basic_info.get('course_name') or ''
         name = str(name).strip()
-        return name if name else '课程名称'
+        return name if name else '????'
 
     def save_config(self):
         config_dir = os.path.join(os.getenv('APPDATA') or os.path.expanduser('~'), 'CalculatorApp')
@@ -469,20 +469,34 @@ class GradeAnalysisApp(QMainWindow):
         self.grad_req_btn.clicked.connect(self.open_grad_req_dialog)
         self.settings_btn.clicked.connect(self.open_settings_window)
 
-        # Row 1: 开课信息 / 课程基本信息 / 课程考核与课程目标对应关系
+        # Row 1: ???? / ?????? / ????
+        top_btns_row1.addStretch()
         top_btns_row1.addWidget(self.course_open_btn)
+        top_btns_row1.addSpacing(108)
         top_btns_row1.addWidget(self.course_basic_btn)
-        top_btns_row1.addWidget(self.relation_btn)
+        top_btns_row1.addSpacing(108)
+        top_btns_row1.addWidget(self.ratio_btn)
         top_btns_row1.addStretch()
 
-        # Row 2: 成绩占比 / 课程目标与毕业要求的对应关系 / 设置
-        top_btns_row2.addWidget(self.ratio_btn)
+        # Row 2: ????????????? / ?????????????? / ??
+        top_btns_row2.addStretch()
+        top_btns_row2.addWidget(self.relation_btn)
+        top_btns_row2.addSpacing(110)
         top_btns_row2.addWidget(self.grad_req_btn)
+        top_btns_row2.addSpacing(150)
         top_btns_row2.addWidget(self.settings_btn)
         top_btns_row2.addStretch()
 
         card_layout.addLayout(top_btns_row1)
         card_layout.addLayout(top_btns_row2)
+
+        # 分割线（按钮区与下方内容的分隔）
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        divider.setStyleSheet("color: #BDBDBD;")
+        divider.setFixedHeight(2)
+        card_layout.addWidget(divider)
 
         self.tabs = QTabWidget()
         self.tab_forward = QWidget()
@@ -668,20 +682,36 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_course_open_dialog(self):
         data = dict(self.course_open_info or {})
-        if not data.get('course_name'):
-            data['course_name'] = self._get_course_name()
+        # Sync course name from basic info if missing
+        if not data.get('course_name') and (self.course_basic_info or {}).get('course_name'):
+            data['course_name'] = (self.course_basic_info or {}).get('course_name', '')
+        if data.get('course_name') == '课程名称':
+            data['course_name'] = ''
         dialog = CourseOpenDialog(self, data)
         if dialog.exec():
             self.course_open_info = dialog.get_data()
+            # Sync course name to basic info on save
+            if self.course_open_info.get('course_name'):
+                if not self.course_basic_info:
+                    self.course_basic_info = {}
+                self.course_basic_info['course_name'] = self.course_open_info.get('course_name')
             self.save_config()
 
     def open_course_basic_dialog(self):
         data = dict(self.course_basic_info or {})
-        if not data.get('course_name'):
-            data['course_name'] = self._get_course_name()
+        # Prefill course name from open info
+        if not data.get('course_name') and (self.course_open_info or {}).get('course_name'):
+            data['course_name'] = (self.course_open_info or {}).get('course_name', '')
+        if data.get('course_name') == '课程名称':
+            data['course_name'] = ''
         dialog = CourseBasicDialog(self, data)
         if dialog.exec():
             self.course_basic_info = dialog.get_data()
+            # Sync course name to basic info on save
+            if self.course_basic_info.get('course_name'):
+                if not self.course_open_info:
+                    self.course_open_info = {}
+                self.course_open_info['course_name'] = self.course_basic_info.get('course_name')
             self.save_config()
 
     def open_grad_req_dialog(self):
@@ -689,15 +719,17 @@ class GradeAnalysisApp(QMainWindow):
         if not obj_count and self.relation_payload:
             obj_count = int(self.relation_payload.get('objectives_count', 0) or 0)
         if not obj_count:
-            QMessageBox.warning(self, '??', '???????????????????????????')
+            QMessageBox.warning(self, '提示', '请先在“课程考核与课程目标对应关系”中设置课程目标数量')
             return
         dialog = GradRequirementDialog(self, obj_count, self.grad_req_map or [])
         if dialog.exec():
             self.grad_req_map = dialog.get_data()
             self.save_config()
 
-
     def open_relation_table(self):
+
+
+
         """打开课程目标对应关系编辑器"""    
         if self.usual_ratio in ("", None) or self.midterm_ratio in ("", None) or self.final_ratio in ("", None):
              QMessageBox.warning(self, '提示', '请先在“成绩占比”中设置比例')

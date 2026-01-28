@@ -287,6 +287,12 @@ class SettingsDialog(QDialog):
                     parent.relation_payload = None
                 if hasattr(parent, "num_objectives"):
                     parent.num_objectives = 0
+                if hasattr(parent, "course_open_info"):
+                    parent.course_open_info = {}
+                if hasattr(parent, "course_basic_info"):
+                    parent.course_basic_info = {}
+                if hasattr(parent, "grad_req_map"):
+                    parent.grad_req_map = []
                 parent.course_description = ""
                 parent.objective_requirements = []
                 parent.previous_achievement_file = ""
