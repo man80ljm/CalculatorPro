@@ -14,6 +14,9 @@ from core import GradeProcessor
 from io_app.excel_templates import create_forward_template, create_reverse_template
 from relation_table import RelationTableSetupDialog, RelationTableEditorDialog
 from ui_app.settings_dialog import SettingsDialog
+from ui_app.course_open_dialog import CourseOpenDialog
+from ui_app.course_basic_dialog import CourseBasicDialog
+from ui_app.grad_req_dialog import GradRequirementDialog
 
 # ==========================================
 # 工具类：适配旧核心逻辑的 Mock 输入
@@ -264,6 +267,9 @@ class GradeAnalysisApp(QMainWindow):
         self.previous_achievement_file = None
         self.course_description = ""
         self.objective_requirements = []
+        self.course_open_info = {}
+        self.course_basic_info = {}
+        self.grad_req_map = []
         self.api_key = ""
         self.num_objectives = 0
         self.processor = None
@@ -295,6 +301,9 @@ class GradeAnalysisApp(QMainWindow):
                     self.objective_requirements = config.get('objective_requirements', [])
                     self.previous_achievement_file = config.get('previous_achievement_file', '')
                     self.relation_payload = config.get('relation_payload')
+                    self.course_open_info = config.get('course_open_info', {})
+                    self.course_basic_info = config.get('course_basic_info', {})
+                    self.grad_req_map = config.get('grad_req_map', [])
                     if self.relation_payload and not self.num_objectives:
                         self.num_objectives = self.relation_payload.get("objectives_count", 0)
                     if 'ratios' in config:
@@ -303,6 +312,15 @@ class GradeAnalysisApp(QMainWindow):
                         self.final_ratio = config['ratios'].get('final', 0.5)
             except Exception as e:
                 print(f"读取配置文件失败: {str(e)}")
+
+    def _get_course_name(self):
+        name = ''
+        if isinstance(self.course_open_info, dict):
+            name = self.course_open_info.get('course_name') or ''
+        if not name and isinstance(self.course_basic_info, dict):
+            name = self.course_basic_info.get('course_name') or ''
+        name = str(name).strip()
+        return name if name else '课程名称'
 
     def save_config(self):
         config_dir = os.path.join(os.getenv('APPDATA') or os.path.expanduser('~'), 'CalculatorApp')
@@ -313,6 +331,9 @@ class GradeAnalysisApp(QMainWindow):
             'objective_requirements': self.objective_requirements,
             'previous_achievement_file': self.previous_achievement_file,
             'relation_payload': self.relation_payload,
+            'course_open_info': self.course_open_info,
+            'course_basic_info': self.course_basic_info,
+            'grad_req_map': self.grad_req_map,
             'ratios': {
                 'usual': self.usual_ratio,
                 'midterm': self.midterm_ratio,
@@ -427,35 +448,41 @@ class GradeAnalysisApp(QMainWindow):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 22px; font-weight: bold; margin-bottom: 10px;")
         card_layout.addWidget(title)
-        course_row = QHBoxLayout()
+        top_btns_row1 = QHBoxLayout()
+        top_btns_row2 = QHBoxLayout()
 
-        course_label = QLabel('课程名称:')
-        self.course_name_input = QLineEdit()
-        self.course_name_input.setPlaceholderText('请输入课程名称...')
-        course_row.addWidget(course_label)
-        course_row.addWidget(self.course_name_input)
-        card_layout.addLayout(course_row)
-
-        top_btns_row = QHBoxLayout()
-
-        self.ratio_btn = QPushButton('成绩占比')
+        self.course_open_btn = QPushButton('开课信息')
+        self.course_basic_btn = QPushButton('课程基本信息')
         self.relation_btn = QPushButton('课程考核与课程目标对应关系')
+        self.ratio_btn = QPushButton('成绩占比')
+        self.grad_req_btn = QPushButton('课程目标与毕业要求的对应关系')
         self.settings_btn = QPushButton('设置')
 
-        for btn in [self.ratio_btn, self.relation_btn, self.settings_btn]:
+        for btn in [self.course_open_btn, self.course_basic_btn, self.relation_btn, self.ratio_btn, self.grad_req_btn, self.settings_btn]:
             btn.setObjectName("TopButton")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.ratio_btn.clicked.connect(self.open_ratio_dialog)
+        self.course_open_btn.clicked.connect(self.open_course_open_dialog)
+        self.course_basic_btn.clicked.connect(self.open_course_basic_dialog)
         self.relation_btn.clicked.connect(self.open_relation_table)
+        self.ratio_btn.clicked.connect(self.open_ratio_dialog)
+        self.grad_req_btn.clicked.connect(self.open_grad_req_dialog)
         self.settings_btn.clicked.connect(self.open_settings_window)
 
-        top_btns_row.addWidget(self.ratio_btn)
-        top_btns_row.addWidget(self.relation_btn)
-        top_btns_row.addWidget(self.settings_btn)
-        top_btns_row.addStretch()
+        # Row 1: 开课信息 / 课程基本信息 / 课程考核与课程目标对应关系
+        top_btns_row1.addWidget(self.course_open_btn)
+        top_btns_row1.addWidget(self.course_basic_btn)
+        top_btns_row1.addWidget(self.relation_btn)
+        top_btns_row1.addStretch()
 
-        card_layout.addLayout(top_btns_row)
+        # Row 2: 成绩占比 / 课程目标与毕业要求的对应关系 / 设置
+        top_btns_row2.addWidget(self.ratio_btn)
+        top_btns_row2.addWidget(self.grad_req_btn)
+        top_btns_row2.addWidget(self.settings_btn)
+        top_btns_row2.addStretch()
+
+        card_layout.addLayout(top_btns_row1)
+        card_layout.addLayout(top_btns_row2)
 
         self.tabs = QTabWidget()
         self.tab_forward = QWidget()
@@ -639,6 +666,37 @@ class GradeAnalysisApp(QMainWindow):
             self.previous_achievement_file = dialog.previous_achievement_file
             self.save_config()
 
+    def open_course_open_dialog(self):
+        data = dict(self.course_open_info or {})
+        if not data.get('course_name'):
+            data['course_name'] = self._get_course_name()
+        dialog = CourseOpenDialog(self, data)
+        if dialog.exec():
+            self.course_open_info = dialog.get_data()
+            self.save_config()
+
+    def open_course_basic_dialog(self):
+        data = dict(self.course_basic_info or {})
+        if not data.get('course_name'):
+            data['course_name'] = self._get_course_name()
+        dialog = CourseBasicDialog(self, data)
+        if dialog.exec():
+            self.course_basic_info = dialog.get_data()
+            self.save_config()
+
+    def open_grad_req_dialog(self):
+        obj_count = self.num_objectives
+        if not obj_count and self.relation_payload:
+            obj_count = int(self.relation_payload.get('objectives_count', 0) or 0)
+        if not obj_count:
+            QMessageBox.warning(self, '??', '???????????????????????????')
+            return
+        dialog = GradRequirementDialog(self, obj_count, self.grad_req_map or [])
+        if dialog.exec():
+            self.grad_req_map = dialog.get_data()
+            self.save_config()
+
+
     def open_relation_table(self):
         """打开课程目标对应关系编辑器"""    
         if self.usual_ratio in ("", None) or self.midterm_ratio in ("", None) or self.final_ratio in ("", None):
@@ -749,7 +807,7 @@ class GradeAnalysisApp(QMainWindow):
 
         try:
             self.processor = GradeProcessor(
-                self.course_name_input,
+                MockInput(self._get_course_name()),
                 mock_num_obj,        
                 self.weight_inputs,  
                 mock_usual,
