@@ -469,21 +469,21 @@ class GradeAnalysisApp(QMainWindow):
         self.grad_req_btn.clicked.connect(self.open_grad_req_dialog)
         self.settings_btn.clicked.connect(self.open_settings_window)
 
-        # Row 1: ???? / ?????? / ????
+        # Row 1: 课程开课 / 课程基本信息 / 成绩占比
         top_btns_row1.addStretch()
         top_btns_row1.addWidget(self.course_open_btn)
-        top_btns_row1.addSpacing(108)
+        top_btns_row1.addSpacing(167)
         top_btns_row1.addWidget(self.course_basic_btn)
-        top_btns_row1.addSpacing(108)
+        top_btns_row1.addSpacing(167)
         top_btns_row1.addWidget(self.ratio_btn)
         top_btns_row1.addStretch()
 
-        # Row 2: ????????????? / ?????????????? / ??
+        # Row 2: 课程考核与课程目标对应关系 / 毕业要求指标点 / 设置
         top_btns_row2.addStretch()
         top_btns_row2.addWidget(self.relation_btn)
-        top_btns_row2.addSpacing(110)
+        top_btns_row2.addSpacing(63)
         top_btns_row2.addWidget(self.grad_req_btn)
-        top_btns_row2.addSpacing(150)
+        top_btns_row2.addSpacing(63)
         top_btns_row2.addWidget(self.settings_btn)
         top_btns_row2.addStretch()
 
