@@ -1,5 +1,12 @@
 import os
 import requests
+import re
+from docx import Document
+from docx.shared import Pt, Cm
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.enum.table import WD_ROW_HEIGHT_RULE, WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
@@ -247,6 +254,68 @@ class SettingsDialog(QDialog):
         self.test_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
         self.test_dialog.exec()
 
+
+    def _set_cell_border(self, cell, size=4):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        borders = tcPr.find(qn('w:tcBorders'))
+        if borders is None:
+            borders = OxmlElement('w:tcBorders')
+            tcPr.append(borders)
+        for edge in ('top', 'left', 'bottom', 'right'):
+            edge_tag = qn(f'w:{edge}')
+            element = borders.find(edge_tag)
+            if element is None:
+                element = OxmlElement(f'w:{edge}')
+                borders.append(element)
+            element.set(qn('w:val'), 'single')
+            element.set(qn('w:sz'), str(size))  # 0.5pt -> 4
+            element.set(qn('w:color'), '000000')
+
+    def _export_course_basic_word(self, data: dict):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        output_dir = os.path.join(root, 'outputs')
+        os.makedirs(output_dir, exist_ok=True)
+        course_name = (data.get('course_name') or '\u8bfe\u7a0b').strip()
+        safe_name = re.sub(r'[\\/:*?"<>|]', '_', course_name)
+        output_path = os.path.join(output_dir, "1.\u8bfe\u7a0b\u57fa\u672c\u4fe1\u606f\u8868.docx")
+
+        doc = Document()
+        table = doc.add_table(rows=4, cols=6)
+        table.autofit = False
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        col_width = Cm(14.64 / 6)
+
+        rows = [
+            ('\u8bfe\u7a0b\u540d\u79f0', data.get('course_name', ''), '\u5b66\u5206', data.get('credits', ''), '\u5b66\u65f6', data.get('hours', '')),
+            ('\u8bfe\u7a0b\u6027\u8d28', data.get('course_type', ''), '\u8bfe\u7a0b\u4ee3\u7801', data.get('course_code', ''), '\u5b66\u5e74\u5b66\u671f', data.get('school_year_term', '')),
+            ('\u5f00\u8bfe\u5b66\u9662', data.get('college', ''), '\u4efb\u8bfe\u6559\u5e08', data.get('teacher', ''), '\u4e0a\u8bfe\u4e13\u4e1a', data.get('major', '')),
+            ('\u4e0a\u8bfe\u73ed\u7ea7', data.get('class_name', ''), '\u4e0a\u8bfe\u4eba\u6570', data.get('student_count', ''), '\u8003\u6838\u4eba\u6570', data.get('exam_count', '')),
+        ]
+
+        for r_idx, row_vals in enumerate(rows):
+            row = table.rows[r_idx]
+            row.height_rule = WD_ROW_HEIGHT_RULE.AUTO
+            for c_idx in range(6):
+                cell = row.cells[c_idx]
+                cell.width = col_width
+                cell.text = ''
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                run = p.add_run(str(row_vals[c_idx]) if c_idx < len(row_vals) else '')
+                run.font.name = '\u4eff\u5b8b'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '\u4eff\u5b8b')
+                run.font.size = Pt(12)
+                if c_idx in (0, 2, 4):
+                    run.bold = True
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                self._set_cell_border(cell, size=4)
+
+        doc.save(output_path)
+        return output_path
+
     def _on_save(self):
         try:
             new_api = self.api_input.text().strip()
@@ -256,6 +325,7 @@ class SettingsDialog(QDialog):
             self.objective_requirements = [item.text().strip() for item in self.objective_inputs]
 
             parent = self.parent()
+            export_error = None
             if parent:
                 parent.api_key = self.api_key_value
                 parent.course_description = self.description_value
@@ -264,7 +334,15 @@ class SettingsDialog(QDialog):
                 if hasattr(parent, "save_config"):
                     parent.save_config()
 
-            QMessageBox.information(self, "提示", "保存成功")
+                try:
+                    self._export_course_basic_word(getattr(parent, 'course_basic_info', {}) or {})
+                except Exception as exc:
+                    export_error = str(exc)
+
+            if export_error:
+                QMessageBox.warning(self, "提示", f"保存成功，但生成课程基本信息表失败: {export_error}")
+            else:
+                QMessageBox.information(self, "提示", "保存成功")
             self.accept()
         except Exception as exc:
             QMessageBox.warning(self, "提示", f"保存失败：{exc}")
