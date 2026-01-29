@@ -63,52 +63,54 @@ class GradeProcessor:
             return error_message
 
     def call_deepseek_api(self, prompt: str) -> str:
-        """调用 DeepSeek API 获取答案，增加重试机制"""
+        """调用 DeepSeek API 获取答案，包含重试与超时处理。"""
         if not self.api_key:
             return "请先设置API Key"
-        
+
         url = "https://api.deepseek.com/v1/chat/completions"
-        api_key = self.api_key.strip().strip('<').strip('>')
+        api_key = self.api_key.strip().strip("<").strip(">")
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        # 根据问题类型设置不同的字数限制
-        if "针对上一年度存在问题的改进情况" in prompt:
-            max_tokens = 200  # 200 字以内
-            prompt = f"{prompt}\n用一段话回答，不要分点阐述，同时控制字数在200字以内。"
-        else:
-            max_tokens = 100  # 100 字以内
-            prompt = f"{prompt}\n用一段话回答，不要分点阐述，同时控制字数在100字以内。"
-        
+
+        max_tokens = 600
+        match = re.search(r"接近(\d+)字", prompt)
+        if match:
+            try:
+                word_limit = int(match.group(1))
+                max_tokens = max(200, min(1500, word_limit * 4))
+            except ValueError:
+                max_tokens = 600
+
         payload = {
             "model": "deepseek-chat",
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant specializing in course analysis and improvement."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ],
             "temperature": 0.7,
             "top_p": 1,
             "max_tokens": max_tokens,
-            "stream": False
+            "stream": False,
         }
-        
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = requests.post(url, headers=headers, json=payload, timeout=30)
                 response.raise_for_status()
-                return response.json()['choices'][0]['message']['content'].strip()
+                return response.json()["choices"][0]["message"]["content"].strip()
             except requests.Timeout:
                 if attempt < max_retries - 1:
                     print(f"API 调用超时，正在重试（第 {attempt + 1}/{max_retries} 次）...")
                     time.sleep(2)
                     continue
-                return "API 调用超时，请检查网络连接或稍后重试（可能需要使用 VPN 或代理访问 api.deepseek.com）"
+                return "API 调用超时，请检查网络连接或稍后重试（可能需要使用VPN或代理访问 api.deepseek.com）"
             except requests.RequestException as e:
                 error_message = f"API 调用失败: {str(e)}"
-                if hasattr(e, 'response') and e.response is not None:
-                    error_message += f"\n服务器返回: {e.response.text}"
+                if hasattr(e, "response") and e.response is not None:
+                    error_message += f"\n服务端返回: {e.response.text}"
                 if attempt < max_retries - 1:
                     print(f"API 调用失败，正在重试（第 {attempt + 1}/{max_retries} 次）...")
                     time.sleep(2)
@@ -838,6 +840,7 @@ class GradeProcessor:
                     method_avgs[m_name] = 0.0
 
         prev_data = self.previous_achievement_data or {}
+        current_achievement = {}
         total_obj_weight = 0.0
         total_obj_actual = 0.0
 
@@ -890,6 +893,7 @@ class GradeProcessor:
                 row_cursor += 1
 
             achievement = round(obj_actual_sum / obj_weight_sum, 4) if obj_weight_sum > 0 else 0
+            current_achievement[obj_name] = achievement
             prev_val = prev_data.get(obj_name, 0) if prev_data else 0
             prev_val = 0 if prev_val is None else prev_val
 
@@ -905,6 +909,8 @@ class GradeProcessor:
             total_obj_actual += obj_actual_sum
 
         total_attainment = round(total_obj_actual / total_obj_weight, 4) if total_obj_weight > 0 else 0
+        current_achievement["总达成度"] = total_attainment
+        self.current_achievement = current_achievement
         expected_attainment = 0.7
         prev_total = 0
         for key in ["\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c", "\u8bfe\u7a0b\u603b\u76ee\u6807", "\u8bfe\u7a0b\u603b\u8fbe\u6210\u503c", "total_value"]:
@@ -1204,34 +1210,38 @@ class GradeProcessor:
             raise ValueError(f"\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\u5931\u8d25: {str(e)}")
 
     def generate_improvement_report(self, current_achievement: Dict[str, float], course_name: str, num_objectives: int, answers=None) -> None:
-        """Generate the single-column improvement report."""
+        """Generate single-column improvement report."""
         output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
         os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, f"{self._safe_filename(course_name)}\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd.xlsx")
+        output_file = os.path.join(
+            output_dir,
+            f"{self._safe_filename(course_name)}\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd.xlsx",
+        )
 
         num_objectives = max(1, int(num_objectives))
         questions = []
         for i in range(1, num_objectives + 1):
-            questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff08\u0031\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790")
-            questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff08\u0032\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+            questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff081\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790")
+            questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff082\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+
         if answers is None:
             prev_data = self.previous_achievement_data or {}
+            current_data = current_achievement or {}
             prev_total = prev_data.get("\u8bfe\u7a0b\u603b\u76ee\u6807", 0)
-            current_total = current_achievement.get("\u603b\u8fbe\u6210\u5ea6", 0)
+            current_total = current_data.get("\u603b\u8fbe\u6210\u5ea6", 0)
 
             context = f"\u8bfe\u7a0b\u7b80\u4ecb: {self.course_description}\n"
             for i, req in enumerate(self.objective_requirements, 1):
                 context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u8981\u6c42: {req}\n"
             for i in range(1, num_objectives + 1):
                 prev_score = prev_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
-                current_score = current_achievement.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
+                current_score = current_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
                 context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_score}\n"
                 context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_score}\n"
             context += f"\u8bfe\u7a0b\u603b\u76ee\u6807\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_total}\n"
             context += f"\u8bfe\u7a0b\u603b\u76ee\u6807\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_total}\n"
 
             cache_file = os.path.join(output_dir, "api_cache.json")
-
             cached_answers = {}
             if os.path.exists(cache_file):
                 try:
@@ -1244,7 +1254,7 @@ class GradeProcessor:
             total_questions = len(questions)
             for i, question in enumerate(questions):
                 if self.status_label:
-                    self.status_label.setText(f"\u6b63\u5728\u5904\u7406\u7b2c {i+1}/{total_questions} \u4e2a\u95ee\u9898...")
+                    self.status_label.setText(f"\u6b63\u5728\u5904\u7406\u7b2c {i + 1}/{total_questions} \u4e2a\u95ee\u9898...")
                 prompt = f"{context}\n\u95ee\u9898: {question}"
                 cache_key = f"{course_name}_{question}"
                 if cache_key in cached_answers:
@@ -1260,34 +1270,51 @@ class GradeProcessor:
                         pass
 
         rows = []
-        rows.append("\uff08\u4e8c\uff09\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+        overall_answer = ""
         answer_idx = 0
+        if answers and len(answers) == (num_objectives * 2 + 1):
+            overall_answer = answers[0]
+            answer_idx = 1
+        rows.append("\uff08\u4e00\uff09\u603b\u4f53\u60c5\u51b5")
+        rows.append(overall_answer or "")
+        rows.append("\uff08\u4e8c\uff09\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
         for i in range(1, num_objectives + 1):
             rows.append(f"{i}.\u8bfe\u7a0b\u76ee\u6807{i}")
-            rows.append("\uff08\u0031\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790\uff1a")
+            rows.append("\uff081\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790\uff1a")
             rows.append(answers[answer_idx] if answers else "")
             answer_idx += 1
-            rows.append("\uff08\u0032\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd\uff1a")
+            rows.append("\uff082\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd\uff1a")
             rows.append(answers[answer_idx] if answers else "")
             answer_idx += 1
-            rows.append("")
+
+        heading_texts = {
+            "\uff08\u4e00\uff09\u603b\u4f53\u60c5\u51b5",
+            "\uff08\u4e8c\uff09\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd",
+        }
+        heading_font = Font(name="\u4eff\u5b8b", size=16, bold=True)
+        body_font = Font(name="\u4eff\u5b8b", size=16, bold=False)
+        no_border = Border()
 
         try:
             wb = openpyxl.Workbook()
             ws = wb.active
-            ws.title = "\u8bfe\u7a0b\u5206\u76ee\u6807\u5206\u6790"
-            thin = Side(border_style="thin", color="000000")
-            border = Border(left=thin, right=thin, top=thin, bottom=thin)
-            ws.column_dimensions["A"].width = 60
+            ws.title = "\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd"
+            ws.column_dimensions["A"].width = 75
+            ws.sheet_view.showGridLines = False
 
             for row_idx, text in enumerate(rows, start=1):
-                cell = ws.cell(row=row_idx, column=1, value=text)
-                cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="left")
-                cell.border = border
-                if row_idx == 1:
-                    cell.font = Font(bold=True)
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                if text == "" or (answers and text in answers):
+                cell = ws.cell(row=row_idx, column=1)
+                if text in heading_texts:
+                    cell.value = text
+                    cell.font = heading_font
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                else:
+                    display_text = f"\u3000\u3000{text}" if text else ""
+                    cell.value = display_text
+                    cell.font = body_font
+                    cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
+                cell.border = no_border
+                if text == overall_answer or (answers and text in answers):
                     ws.row_dimensions[row_idx].height = 60
 
             wb.save(output_file)
@@ -1295,29 +1322,29 @@ class GradeProcessor:
             print(f"Error writing to Excel: {str(e)}")
             raise
 
-
     def store_api_key(self, api_key: str) -> None:
-        """存储API Key"""
+        """\u5b58\u50a8 API Key\u3002"""
         self.api_key = api_key
         if self.status_label:
-            self.status_label.setText("已存储API Key")
+            self.status_label.setText("\u5df2\u5b58\u50a8API Key")
 
     def generate_ai_report(self, num_objectives: int, current_achievement: Dict[str, float]) -> None:
-        """生成AI分析报告"""
+        """\u751f\u6210AI\u5206\u6790\u62a5\u544a\u3002"""
         if not self.api_key:
-            raise ValueError("请先设置API Key")
-        
+            raise ValueError("\u8bf7\u5148\u8bbe\u7f6eAPI Key")
+
         course_name = self.course_name_input.text()
         if not course_name:
             if self.status_label:
-                self.status_label.setText("请先输入课程名称")
+                self.status_label.setText("\u8bf7\u5148\u8f93\u5165\u8bfe\u7a0b\u540d\u79f0")
             return
-        
+
         try:
             self.generate_improvement_report(current_achievement, course_name, num_objectives)
             if self.status_label:
-                self.status_label.setText("AI分析报告已生成")
+                self.status_label.setText("AI\u5206\u6790\u62a5\u544a\u5df2\u751f\u6210")
         except Exception as e:
             if self.status_label:
-                self.status_label.setText("生成AI分析报告失败！")
-            raise ValueError(f"生成AI分析报告失败: {str(e)}")
+                self.status_label.setText("\u751f\u6210AI\u5206\u6790\u62a5\u544a\u5931\u8d25")
+            raise ValueError(f"\u751f\u6210AI\u5206\u6790\u62a5\u544a\u5931\u8d25: {str(e)}")
+

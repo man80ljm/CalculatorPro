@@ -193,66 +193,75 @@ class TemplateDownloadDialog(QDialog):
 # ==========================================
 # 线程：AI 报告生成
 class GenerateReportThread(QThread):
-    """异步生成 AI 课程报告的线程"""
+    """AI report worker thread."""
     finished = pyqtSignal()
     error = pyqtSignal(str)
     progress = pyqtSignal(str)
     progress_value = pyqtSignal(int)
 
-    def __init__(self, processor, num_objectives, current_achievement, report_style):
+    def __init__(self, processor, num_objectives, current_achievement, report_style, word_limit):
         super().__init__()
         self.processor = processor
         self.num_objectives = num_objectives
         self.current_achievement = current_achievement
         self.report_style = report_style
+        self.word_limit = word_limit
 
     def run(self):
         try:
             prev_data = self.processor.previous_achievement_data or {}
             current_data = self.current_achievement or {}
-            questions = ["针对上一年度存在问题的改进情况"]
-            for i in range(1, self.num_objectives + 1):
-                questions.append(f"课程目标{i}达成情况分析")
-                questions.append(f"课程目标{i}存在问题及改进措施")
-            total_questions = len(questions)
-            self.progress.emit("正在生成AI报告...")
-            self.progress_value.emit(0)
-            
-            # 构造上下文
-            context = f"课程简介: {self.processor.course_description}\n"
-            for i, req in enumerate(self.processor.objective_requirements, 1):
-                context += f"课程目标{i}要求: {req}\n"
-            for i in range(1, self.num_objectives + 1):
-                prev_score = prev_data.get(f"课程目标{i}", 0)
-                current_score = current_data.get(f"课程目标{i}", 0)
-                context += f"课程目标{i}上一年度达成度: {prev_score}\n"
-                context += f"课程目标{i}本年度达成度: {current_score}\n"
 
-            prev_total = prev_data.get("课程总目标", 0)
-            current_total = current_data.get("总达成度", 0)
-            context += f"课程总目标上一年度达成度: {prev_total}\n"
-            context += f"课程总目标本年度达成度: {current_total}\n"
+            overall_question = "\u6982\u8ff0\u672c\u6b21\u8bc4\u4ef7\u5de5\u4f5c\u5f00\u5c55\u7684\u603b\u4f53\u60c5\u51b5\uff0c\u53ef\u4ee5\u4ece\u6559\u5b66\u76ee\u6807\u3001\u6559\u5b66\u5185\u5bb9\u3001\u6559\u5b66\u65b9\u6cd5\u3001\u6559\u5b66\u624b\u6bb5\u3001\u6559\u5b66\u7b56\u7565\u3001\u6559\u5b66\u8d44\u6e90\u3001\u6559\u5b66\u73af\u5883\u7b49\u73af\u8282\u8fdb\u884c\u5b9e\u8d28\u6027\u5206\u6790\u3002"
+            questions = [overall_question]
+            for i in range(1, self.num_objectives + 1):
+                questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\u8fbe\u6210\u60c5\u51b5\u5206\u6790")
+                questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+            total_questions = len(questions)
+
+            self.progress.emit("\u6b63\u5728\u751f\u6210AI\u62a5\u544a...")
+            self.progress_value.emit(0)
+
+            context = f"\u8bfe\u7a0b\u7b80\u4ecb: {self.processor.course_description}\n"
+            for i, req in enumerate(self.processor.objective_requirements, 1):
+                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u8981\u6c42: {req}\n"
+            for i in range(1, self.num_objectives + 1):
+                prev_score = prev_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
+                current_score = current_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
+                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_score}\n"
+                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_score}\n"
+
+            prev_total = prev_data.get("\u8bfe\u7a0b\u603b\u76ee\u6807", 0)
+            current_total = current_data.get("\u603b\u8fbe\u6210\u5ea6", 0)
+            expected_total = 0.7
+            context += f"\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c\uff08\u672c\u5b66\u5e74\uff09: {current_total}\n"
+            context += f"\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u671f\u671b\u503c: {expected_total}\n"
+            context += f"\u4e0a\u4e00\u8f6e\u6559\u5b66\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c: {prev_total}\n"
+
+            min_chars = max(50, int(self.word_limit * 0.8))
 
             answers = []
-            course_name = "课程名称"
+            course_name = "\u8bfe\u7a0b\u540d\u79f0"
             try:
                 if hasattr(self.processor, "course_name_input"):
                     course_name = self.processor.course_name_input.text() or course_name
+                elif hasattr(self.processor, "course_name"):
+                    course_name = self.processor.course_name or course_name
             except Exception:
                 pass
 
             for i, question in enumerate(questions):
-                self.progress.emit(f"正在生成 {i+1}/{total_questions} 个问题...")
+                self.progress.emit(f"\u6b63\u5728\u751f\u6210 {i+1}/{total_questions} \u4e2a\u95ee\u9898...")
                 self.progress_value.emit(i + 1)
-                if "课程目标" in question and int(question.split("课程目标")[1][0]) > self.num_objectives:
-                    answers.append("无")
-                    continue
-                prompt = f"{context}\n问题: {question}\n请以{self.report_style}风格回答，语言简洁。"
+                if i == 0:
+                    prompt = f"{context}\n\u95ee\u9898: {question}\n\u8bf7\u4ee5{self.report_style}\u98ce\u683c\u56de\u7b54\u3002"
+                else:
+                    prompt = f"{context}\n\u95ee\u9898: {question}\n\u8bf7\u4ee5{self.report_style}\u98ce\u683c\u56de\u7b54\uff0c\u5b57\u6570\u5c3d\u91cf\u63a5\u8fd1{self.word_limit}\u5b57\uff0c\u4e0d\u5c11\u4e8e{min_chars}\u5b57\u3002"
                 answer = self.processor.call_deepseek_api(prompt)
-                if "超时" in answer:
-                    self.progress.emit(f"第 {i+1}/{total_questions} 个问题超时，已记录提示。")
-                elif "失败" in answer or "错误" in answer:
-                    self.progress.emit(f"第 {i+1}/{total_questions} 个问题失败，已记录提示。")
+                if "\u8d85\u65f6" in answer:
+                    self.progress.emit(f"\u7b2c{i+1}/{total_questions}\u4e2a\u95ee\u9898\u8d85\u65f6\uff0c\u5df2\u8bb0\u5f55\u63d0\u793a\u3002")
+                elif "\u5931\u8d25" in answer or "\u9519\u8bef" in answer:
+                    self.progress.emit(f"\u7b2c{i+1}/{total_questions}\u4e2a\u95ee\u9898\u5931\u8d25\uff0c\u5df2\u8bb0\u5f55\u63d0\u793a\u3002")
                 answers.append(answer)
 
             self.processor.generate_improvement_report(
@@ -264,9 +273,12 @@ class GenerateReportThread(QThread):
             self.progress_value.emit(total_questions)
             self.finished.emit()
         except Exception as e:
-            self.error.emit(f"AI报告生成失败：{str(e)}")
+            self.error.emit(f"AI\u62a5\u544a\u751f\u6210\u5931\u8d25: {str(e)}")
+
 
 class GradeAnalysisApp(QMainWindow):
+
+
     def __init__(self):
         super().__init__()
         self.input_file = None
@@ -583,8 +595,8 @@ class GradeAnalysisApp(QMainWindow):
         tab_panel_layout.setSpacing(4)
         tab_panel_layout.addWidget(self.control_bar, alignment=Qt.AlignmentFlag.AlignHCenter)
         tab_panel_layout.addLayout(action_row)
-        card_layout.addWidget(self.progress_bar)
         card_layout.addWidget(self.status_label)
+        card_layout.addWidget(self.progress_bar)
         outer_layout.addWidget(self.main_card)
         self.fwd_layout = QVBoxLayout(self.tab_forward)
         self.fwd_layout.setContentsMargins(0, 0, 0, 0)
@@ -876,6 +888,8 @@ class GradeAnalysisApp(QMainWindow):
                     spread_mode=s_mode,
                     distribution=d_mode,
                 )
+            # cache current achievement for AI report
+            self.current_achievement = getattr(self.processor, 'current_achievement', {})
             self.status_label.setText(f"处理完成，总达成度: {overall}")
             QMessageBox.information(self, "成功", "成绩处理已完成，请导出结果。")
         except Exception as e:
@@ -896,7 +910,19 @@ class GradeAnalysisApp(QMainWindow):
              QMessageBox.warning(self, "\u63d0\u793a", "API Key\u8bbe\u7f6e\u5931\u8d25")
              return
         report_style = self.combo_style.currentText()
-        self.report_thread = GenerateReportThread(self.processor, self.num_objectives, self.current_achievement, report_style)
+        try:
+            word_limit = int(self.word_count_input.text())
+            if word_limit < 1:
+                word_limit = 200
+        except Exception:
+            word_limit = 200
+        self.report_thread = GenerateReportThread(
+            self.processor,
+            self.num_objectives,
+            self.current_achievement,
+            report_style,
+            word_limit,
+        )
         self.report_thread.finished.connect(self.on_report_finished)
         self.report_thread.error.connect(self.on_report_error)
         self.report_thread.progress.connect(self.status_label.setText)
