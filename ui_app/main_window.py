@@ -208,8 +208,10 @@ class GenerateReportThread(QThread):
 
     def run(self):
         try:
+            prev_data = self.processor.previous_achievement_data or {}
+            current_data = self.current_achievement or {}
             questions = ["针对上一年度存在问题的改进情况"]
-            for i in range(1, 6):
+            for i in range(1, self.num_objectives + 1):
                 questions.append(f"课程目标{i}达成情况分析")
                 questions.append(f"课程目标{i}存在问题及改进措施")
             total_questions = len(questions)
@@ -220,14 +222,14 @@ class GenerateReportThread(QThread):
             context = f"课程简介: {self.processor.course_description}\n"
             for i, req in enumerate(self.processor.objective_requirements, 1):
                 context += f"课程目标{i}要求: {req}\n"
-            for i in range(1, 6):
-                prev_score = self.processor.previous_achievement_data.get(f"课程目标{i}", 0)
-                current_score = self.current_achievement.get(f"课程目标{i}", 0)
+            for i in range(1, self.num_objectives + 1):
+                prev_score = prev_data.get(f"课程目标{i}", 0)
+                current_score = current_data.get(f"课程目标{i}", 0)
                 context += f"课程目标{i}上一年度达成度: {prev_score}\n"
                 context += f"课程目标{i}本年度达成度: {current_score}\n"
 
-            prev_total = self.processor.previous_achievement_data.get("课程总目标", 0)
-            current_total = self.current_achievement.get("总达成度", 0)
+            prev_total = prev_data.get("课程总目标", 0)
+            current_total = current_data.get("总达成度", 0)
             context += f"课程总目标上一年度达成度: {prev_total}\n"
             context += f"课程总目标本年度达成度: {current_total}\n"
 
@@ -247,6 +249,10 @@ class GenerateReportThread(QThread):
                     continue
                 prompt = f"{context}\n问题: {question}\n请以{self.report_style}风格回答，语言简洁。"
                 answer = self.processor.call_deepseek_api(prompt)
+                if "超时" in answer:
+                    self.progress.emit(f"第 {i+1}/{total_questions} 个问题超时，已记录提示。")
+                elif "失败" in answer or "错误" in answer:
+                    self.progress.emit(f"第 {i+1}/{total_questions} 个问题失败，已记录提示。")
                 answers.append(answer)
 
             self.processor.generate_improvement_report(
@@ -429,8 +435,8 @@ class GradeAnalysisApp(QMainWindow):
         self.setWindowTitle('CalculatorPro')
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "..", "calculator.ico")))
         self.setMinimumWidth(885)
-        self.setMinimumHeight(405)
-        self.resize(885, 405)
+        self.setMinimumHeight(450)
+        self.resize(885, 450)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         outer_layout = QVBoxLayout(central_widget)
@@ -666,12 +672,12 @@ class GradeAnalysisApp(QMainWindow):
     def open_settings_window(self):
         """打开 AI 与课程详情设置窗口"""
         dialog = SettingsDialog(
-            self,
-            api_key=self.api_key,
-            description=self.course_description,
-            objective_requirements=self.objective_requirements,
-            objectives_count=self.num_objectives,
-            previous_achievement_file=self.previous_achievement_file,
+        self,
+        api_key=self.api_key,
+        description=self.course_description,
+        objective_requirements=self.objective_requirements,
+        objectives_count=self.num_objectives,
+        previous_achievement_file=self.previous_achievement_file,
         )
         if dialog.exec():
             self.api_key = dialog.api_key_value
@@ -682,7 +688,7 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_course_open_dialog(self):
         data = dict(self.course_open_info or {})
-        # Sync course name from basic info if missing
+        # ?????????????????????????
         if not data.get('course_name') and (self.course_basic_info or {}).get('course_name'):
             data['course_name'] = (self.course_basic_info or {}).get('course_name', '')
         if data.get('course_name') == '课程名称':
@@ -690,7 +696,7 @@ class GradeAnalysisApp(QMainWindow):
         dialog = CourseOpenDialog(self, data)
         if dialog.exec():
             self.course_open_info = dialog.get_data()
-            # Sync course name to basic info on save
+            # ????????????????????????
             if self.course_open_info.get('course_name'):
                 if not self.course_basic_info:
                     self.course_basic_info = {}
@@ -699,7 +705,7 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_course_basic_dialog(self):
         data = dict(self.course_basic_info or {})
-        # Prefill course name from open info
+        # ???????????????????????
         if not data.get('course_name') and (self.course_open_info or {}).get('course_name'):
             data['course_name'] = (self.course_open_info or {}).get('course_name', '')
         if data.get('course_name') == '课程名称':
@@ -707,7 +713,7 @@ class GradeAnalysisApp(QMainWindow):
         dialog = CourseBasicDialog(self, data)
         if dialog.exec():
             self.course_basic_info = dialog.get_data()
-            # Sync course name to basic info on save
+            # ????????????????????????
             if self.course_basic_info.get('course_name'):
                 if not self.course_open_info:
                     self.course_open_info = {}
@@ -727,6 +733,7 @@ class GradeAnalysisApp(QMainWindow):
             self.save_config()
 
     def open_relation_table(self):
+
 
 
 
@@ -852,6 +859,11 @@ class GradeAnalysisApp(QMainWindow):
                 relation_payload=self.relation_payload
             )
 
+            try:
+                self.processor.load_previous_achievement(self.previous_achievement_file)
+            except Exception as e:
+                QMessageBox.warning(self, "提示", f"上一轮达成度表读取失败：{str(e)}")
+
             if hasattr(self.processor, 'set_noise_config') and self.noise_config:
                 self.processor.set_noise_config(self.noise_config)
             if self.tabs.currentIndex() == 0:
@@ -876,11 +888,26 @@ class GradeAnalysisApp(QMainWindow):
         report_style = self.combo_style.currentText()
         self.report_thread = GenerateReportThread(self.processor, self.num_objectives, self.current_achievement, report_style)
         self.report_thread.finished.connect(self.on_report_finished)
+        self.report_thread.error.connect(self.on_report_error)
         self.report_thread.progress.connect(self.status_label.setText)
+        self.report_thread.progress_value.connect(self.on_report_progress)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, max(1, 1 + 2 * self.num_objectives))
+        self.progress_bar.setValue(0)
         self.report_thread.start()
+
+    def on_report_error(self, message: str):
+        self.status_label.setText(f"AI报告生成失败：{message}")
+        self.progress_bar.setVisible(False)
+        QMessageBox.critical(self, "错误", f"AI报告生成失败：{message}")
+
+    def on_report_progress(self, value: int):
+        self.progress_bar.setValue(value)
 
     def on_report_finished(self):
         self.status_label.setText("AI报告生成完成")
+        self.progress_bar.setValue(self.progress_bar.maximum())
+        self.progress_bar.setVisible(False)
         QMessageBox.information(self, "成功", "AI报告已生成。")
 
 if __name__ == '__main__':

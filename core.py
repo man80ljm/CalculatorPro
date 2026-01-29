@@ -528,11 +528,11 @@ class GradeProcessor:
 
 
     def _safe_filename(self, name: str) -> str:
-        """???????????"""
+        """Sanitize filename for Windows paths."""
         if not name:
-            return "\u6210\u7ee9\u660e\u7ec6"
-        safe = re.sub(r"[\\\\/:*\"<>|]", "_", name).strip()
-        return safe or "\u6210\u7ee9\u660e\u7ec6"
+            return "\u672a\u547d\u540d"
+        safe = re.sub(r'[\\/:*"<>|?\\r\\n\\t]', "_", str(name)).strip()
+        return safe or "\u672a\u547d\u540d"
 
     def _get_links(self):
         payload = self.relation_payload or {}
@@ -807,14 +807,22 @@ class GradeProcessor:
         stats_ws.column_dimensions["A"].width = 18
         for col in ["B", "C", "D", "E", "F"]:
             stats_ws.column_dimensions[col].width = 14
-
-
         # EVAL_TABLE_5
-        eval_ws = wb.create_sheet(title="课程目标达成情况评价结果")
-        eval_headers = ["课程分目标", "考核环节", "分权重", "分值/满分", "学生实际得分平均分", "分目标达成值", "上一轮教学分目标达成值"]
+        eval_wb = openpyxl.Workbook()
+        eval_ws = eval_wb.active
+        eval_ws.title = "\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u8bc4\u4ef7\u7ed3\u679c"
+        eval_headers = [
+            "\u8bfe\u7a0b\u5206\u76ee\u6807",
+            "\u8003\u6838\u73af\u8282",
+            "\u5206\u6743\u91cd",
+            "\u5206\u503c/\u6ee1\u5206",
+            "\u5b66\u751f\u5b9e\u9645\u5f97\u5206\u5e73\u5747\u5206",
+            "\u5206\u76ee\u6807\u8fbe\u6210\u503c",
+            "\u4e0a\u4e00\u8f6e\u6559\u5b66\u5206\u76ee\u6807\u8fbe\u6210\u503c",
+        ]
         eval_ws.append(eval_headers)
 
-        # ??????????
+        # \u8ba1\u7b97\u5404\u8003\u6838\u65b9\u5f0f\u5e73\u5747\u5206\uff08\u57fa\u4e8e\u5bfc\u5165\u6210\u7ee9\uff09
         method_avgs = {}
         for link in links:
             for m in link.get("methods", []) or []:
@@ -835,19 +843,19 @@ class GradeProcessor:
 
         row_cursor = 2
         for idx, obj_key in enumerate(obj_keys):
-            obj_name = f"课程目标{idx + 1}"
+            obj_name = f"\u8bfe\u7a0b\u76ee\u6807{idx + 1}"
             obj_start = row_cursor
             obj_weight_sum = 0.0
             obj_actual_sum = 0.0
 
             for link in links:
                 link_name = link.get("name", "")
-                if "平时" in link_name:
-                    display_link = "平时成绩"
-                elif "期中" in link_name:
-                    display_link = "期中考核"
-                elif "期末" in link_name:
-                    display_link = "期末考核"
+                if "\u5e73\u65f6" in link_name:
+                    display_link = "\u5e73\u65f6\u6210\u7ee9"
+                elif "\u671f\u4e2d" in link_name:
+                    display_link = "\u671f\u4e2d\u8003\u6838"
+                elif "\u671f\u672b" in link_name:
+                    display_link = "\u671f\u672b\u8003\u6838"
                 else:
                     display_link = link_name
 
@@ -899,7 +907,7 @@ class GradeProcessor:
         total_attainment = round(total_obj_actual / total_obj_weight, 4) if total_obj_weight > 0 else 0
         expected_attainment = 0.7
         prev_total = 0
-        for key in ["课程目标总达成值", "课程总目标", "课程总达成值", "total_value"]:
+        for key in ["\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c", "\u8bfe\u7a0b\u603b\u76ee\u6807", "\u8bfe\u7a0b\u603b\u8fbe\u6210\u503c", "total_value"]:
             if key in prev_data:
                 prev_total = prev_data.get(key, 0) or 0
                 break
@@ -911,9 +919,9 @@ class GradeProcessor:
             eval_ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
             eval_ws.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=7)
 
-        _append_summary("课程目标达成值", total_attainment)
-        _append_summary("课程目标达成期望值", expected_attainment)
-        _append_summary("上一轮教学课程目标达成值", None, prev_total)
+        _append_summary("\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c", total_attainment)
+        _append_summary("\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u671f\u671b\u503c", expected_attainment)
+        _append_summary("\u4e0a\u4e00\u8f6e\u6559\u5b66\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c", None, prev_total)
 
         eval_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
         eval_border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -932,8 +940,11 @@ class GradeProcessor:
 
         output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"{self._safe_filename(self.course_name_input.text())}\u6210\u7ee9\u660e\u7ec6.xlsx")
-        wb.save(output_path)
+        safe_name = self._safe_filename(self.course_name_input.text())
+        detail_output_path = os.path.join(output_dir, f"{safe_name}\u6210\u7ee9\u660e\u7ec6.xlsx")
+        eval_output_path = os.path.join(output_dir, f"{safe_name}\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u8bc4\u4ef7\u7ed3\u679c.xlsx")
+        eval_wb.save(eval_output_path)
+        wb.save(detail_output_path)
 
         return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
 
@@ -1104,141 +1115,137 @@ class GradeProcessor:
 
 
     def load_previous_achievement(self, file_path: str) -> None:
-        """加载上一学年达成度表，处理目标数量不一致的情况"""
+        """\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\uff0c\u63d0\u53d6\u5404\u8bfe\u7a0b\u76ee\u6807\u7684\u5206\u76ee\u6807\u8fbe\u6210\u503c\u4ee5\u53ca\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c\u3002"""
+        def _objective_count():
+            payload = self.relation_payload or {}
+            objectives = payload.get("objectives") if isinstance(payload, dict) else None
+            if objectives:
+                return len(objectives)
+            if self.objective_requirements:
+                return len(self.objective_requirements)
+            return 5
+
+        def _init_defaults(n):
+            data = {f'\u8bfe\u7a0b\u76ee\u6807{i}': 0 for i in range(1, n + 1)}
+            data['\u8bfe\u7a0b\u603b\u76ee\u6807'] = 0
+            return data
+
+        obj_count = _objective_count()
         if not file_path:
-            # 如果没有文件，初始化默认值（全部为 0）
-            self.previous_achievement_data = {f'课程目标{i}': 0 for i in range(1, 6)}
-            self.previous_achievement_data['课程总目标'] = 0
+            self.previous_achievement_data = _init_defaults(obj_count)
             return
-        
+
         try:
-            # 检查文件是否存在
             if not os.path.exists(file_path):
-                # 如果文件不存在，初始化默认值，而不是抛出异常
-                self.previous_achievement_data = {f'课程目标{i}': 0 for i in range(1, 6)}
-                self.previous_achievement_data['课程总目标'] = 0
+                self.previous_achievement_data = _init_defaults(obj_count)
                 if self.status_label:
-                    self.status_label.setText("未找到上一学年达成度表，已使用默认值")
+                    self.status_label.setText("\u672a\u627e\u5230\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\uff0c\u5df2\u4f7f\u7528\u9ed8\u8ba4\u503c")
                 return
-            
-            df = pd.read_excel(file_path)
-            print(f"加载文件: {file_path}")
-            print(f"表格列名: {df.columns.tolist()}")
-            
-            if '考核环节' in df.columns:
-                print("检测到程序生成的达成度分析表，尝试解析...")
-                data = {f'课程目标{i}': 0 for i in range(1, 6)}
-                data['课程总目标'] = 0
-                
-                m_row = df[df['考核环节'] == '课程分目标达成度\n(M)']
-                if not m_row.empty:
-                    print(f"找到'课程分目标达成度(M)'行: {m_row.to_dict()}")
-                    for i in range(1, 6):
-                        col_name = f'课程目标{i}'
-                        if col_name in m_row.columns and pd.notna(m_row[col_name].iloc[0]):
-                            data[col_name] = float(m_row[col_name].iloc[0])
-                            print(f"提取 {col_name}: {data[col_name]}")
-                
-                total_row = df[df['考核环节'] == '课程总目标达成度']
-                if not total_row.empty:
-                    print(f"找到'课程总目标达成度'行: {total_row.to_dict()}")
-                    for col in total_row.columns:
-                        if col.startswith('课程目标') and pd.notna(total_row[col].iloc[0]):
-                            data['课程总目标'] = float(total_row[col].iloc[0])
-                            print(f"提取 课程总目标: {data['课程总目标']}")
-                            break
-                
-                self.previous_achievement_data = data
-            else:
-                print("未检测到'考核环节'列，尝试按照简单格式解析...")
-                required_columns = ['课程目标', '上一年度达成度']
-                missing_columns = [col for col in required_columns if col not in df.columns]
-                if missing_columns:
-                    raise ValueError(f"上一学年达成度表缺少以下必需列：{', '.join(missing_columns)}。请确保文件包含：{', '.join(required_columns)}。当前列名：{', '.join(df.columns)}")
-                
-                data = {f'课程目标{i}': 0 for i in range(1, 6)}
-                data['课程总目标'] = 0
-                
-                for _, row in df.iterrows():
-                    target = str(row['课程目标']).strip()
-                    if target in data and isinstance(row['上一年度达成度'], (int, float)):
-                        data[target] = float(row['上一年度达成度'])
-                
-                self.previous_achievement_data = data
-            
+
+            xls = pd.ExcelFile(file_path)
+            df = None
+            for sheet in xls.sheet_names:
+                tmp = pd.read_excel(file_path, sheet_name=sheet)
+                cols = [str(c).strip() for c in tmp.columns]
+                if "\u8bfe\u7a0b\u5206\u76ee\u6807" in cols or "\u8bfe\u7a0b\u76ee\u6807" in cols:
+                    df = tmp
+                    break
+            if df is None:
+                df = pd.read_excel(file_path)
+
+            cols = [str(c).strip() for c in df.columns]
+            data = _init_defaults(obj_count)
+
+            if "\u8bfe\u7a0b\u5206\u76ee\u6807" in cols and "\u5206\u76ee\u6807\u8fbe\u6210\u503c" in cols:
+                for i in range(1, obj_count + 1):
+                    key = f'\u8bfe\u7a0b\u76ee\u6807{i}'
+                    rows = df[df["\u8bfe\u7a0b\u5206\u76ee\u6807"].astype(str).str.strip() == key]
+                    if not rows.empty:
+                        val = rows["\u5206\u76ee\u6807\u8fbe\u6210\u503c"].dropna().tolist()
+                        if val:
+                            data[key] = float(val[0])
+                total_rows = df[df["\u8bfe\u7a0b\u5206\u76ee\u6807"].astype(str).str.strip().isin([
+                    "\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c",
+                    "\u8bfe\u7a0b\u603b\u76ee\u6807\u8fbe\u6210\u503c",
+                    "\u8bfe\u7a0b\u603b\u8fbe\u6210\u503c",
+                ])]
+                if not total_rows.empty:
+                    val = total_rows["\u5206\u76ee\u6807\u8fbe\u6210\u503c"].dropna().tolist()
+                    if val:
+                        data["\u8bfe\u7a0b\u603b\u76ee\u6807"] = float(val[0])
+            elif "\u8bfe\u7a0b\u76ee\u6807" in cols:
+                value_col = None
+                for cand in [
+                    "\u4e0a\u4e00\u5e74\u5ea6\u8fbe\u6210\u5ea6",
+                    "\u4e0a\u4e00\u8f6e\u6559\u5b66\u5206\u76ee\u6807\u8fbe\u6210\u503c",
+                    "\u5206\u76ee\u6807\u8fbe\u6210\u503c",
+                ]:
+                    if cand in cols:
+                        value_col = cand
+                        break
+                if value_col:
+                    for _, row in df.iterrows():
+                        target = str(row["\u8bfe\u7a0b\u76ee\u6807"]).strip()
+                        if target in data and isinstance(row[value_col], (int, float)):
+                            data[target] = float(row[value_col])
+                    total_rows = df[df["\u8bfe\u7a0b\u76ee\u6807"].astype(str).str.strip().isin([
+                        "\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c",
+                        "\u8bfe\u7a0b\u603b\u76ee\u6807\u8fbe\u6210\u503c",
+                        "\u8bfe\u7a0b\u603b\u8fbe\u6210\u503c",
+                    ])]
+                    if not total_rows.empty and isinstance(total_rows[value_col].iloc[0], (int, float)):
+                        data["\u8bfe\u7a0b\u603b\u76ee\u6807"] = float(total_rows[value_col].iloc[0])
+            self.previous_achievement_data = data
             if self.status_label:
-                self.status_label.setText(f"已加载上一学年达成度表: {os.path.basename(file_path)}")
+                self.status_label.setText(f"\u5df2\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868: {os.path.basename(file_path)}")
         except Exception as e:
             if self.status_label:
-                self.status_label.setText("加载上一学年达成度表失败！")
-            raise ValueError(f"加载上一学年达成度表失败: {str(e)}")
+                self.status_label.setText("\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\u5931\u8d25")
+            raise ValueError(f"\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\u5931\u8d25: {str(e)}")
 
     def generate_improvement_report(self, current_achievement: Dict[str, float], course_name: str, num_objectives: int, answers=None) -> None:
-        """生成课程持续改进机制信息报告"""
-        output_dir = os.path.dirname(self.input_file)
-        output_file = os.path.join(output_dir, f'{course_name}持续改进机制信息.xlsx')
-        
-        df_data = []
-        for i in range(1, 6):
-            prev_score = self.previous_achievement_data.get(f'课程目标{i}', 0)
-            current_score = current_achievement.get(f'课程目标{i}', 0)
-            next_score = current_score + 2 if current_score > 0 else 0
-            row = {
-                '课程目标': f'课程目标{i}',
-                '上一年度达成度': prev_score,
-                '本一年度目标达成度': current_score,
-                '本次达程度': 0,
-                '下一年度目标达程度': next_score
-            }
-            df_data.append(row)
-        
-        prev_total = self.previous_achievement_data.get('课程总目标', 0)
-        current_total = current_achievement.get('总达成度', 0)
-        next_total = current_total + 2 if current_total > 0 else 0
-        df_data.append({
-            '课程目标': '课程总目标',
-            '上一年度达成度': prev_total,
-            '本一年度目标达成度': current_total,
-            '本次达程度': 0,
-            '下一年度目标达程度': next_total
-        })
-        
-        questions = ["针对上一年度存在问题的改进情况"]
-        for i in range(1, 6):
-            questions.append(f"课程目标{i}达成情况分析")
-            questions.append(f"该课程目标{i}达成情况存在问题分析及改进措施")
-        
-        # 使用传入的 answers 或生成新答案
+        """Generate the single-column improvement report."""
+        output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, f"{self._safe_filename(course_name)}\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd.xlsx")
+
+        num_objectives = max(1, int(num_objectives))
+        questions = []
+        for i in range(1, num_objectives + 1):
+            questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff08\u0031\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790")
+            questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff08\u0032\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
         if answers is None:
-            context = f"课程简介: {self.course_description}\n"
+            prev_data = self.previous_achievement_data or {}
+            prev_total = prev_data.get("\u8bfe\u7a0b\u603b\u76ee\u6807", 0)
+            current_total = current_achievement.get("\u603b\u8fbe\u6210\u5ea6", 0)
+
+            context = f"\u8bfe\u7a0b\u7b80\u4ecb: {self.course_description}\n"
             for i, req in enumerate(self.objective_requirements, 1):
-                context += f"课程目标{i}要求: {req}\n"
-            for i in range(1, 6):
-                prev_score = self.previous_achievement_data.get(f'课程目标{i}', 0)
-                current_score = current_achievement.get(f'课程目标{i}', 0)
-                context += f"课程目标{i}上一年度达成度: {prev_score}\n"
-                context += f"课程目标{i}本年度达成度: {current_score}\n"
-            context += f"课程总目标上一年度达成度: {prev_total}\n"
-            context += f"课程总目标本年度达成度: {current_total}\n"
-            
-            cache_file = os.path.join(output_dir, 'api_cache.json')
+                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u8981\u6c42: {req}\n"
+            for i in range(1, num_objectives + 1):
+                prev_score = prev_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
+                current_score = current_achievement.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
+                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_score}\n"
+                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_score}\n"
+            context += f"\u8bfe\u7a0b\u603b\u76ee\u6807\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_total}\n"
+            context += f"\u8bfe\u7a0b\u603b\u76ee\u6807\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_total}\n"
+
+            cache_file = os.path.join(output_dir, "api_cache.json")
+
             cached_answers = {}
             if os.path.exists(cache_file):
                 try:
-                    with open(cache_file, 'r', encoding='utf-8') as f:
+                    with open(cache_file, "r", encoding="utf-8") as f:
                         cached_answers = json.load(f)
-                except Exception as e:
-                    print(f"加载缓存失败: {str(e)}")
-            
+                except Exception:
+                    cached_answers = {}
+
             answers = []
             total_questions = len(questions)
             for i, question in enumerate(questions):
                 if self.status_label:
-                    self.status_label.setText(f"正在处理第 {i+1}/{total_questions} 个问题...")
-                if "课程目标" in question and int(question.split('课程目标')[1][0]) > num_objectives:
-                    answers.append("无")
-                    continue
-                prompt = f"{context}\n问题: {question}"
+                    self.status_label.setText(f"\u6b63\u5728\u5904\u7406\u7b2c {i+1}/{total_questions} \u4e2a\u95ee\u9898...")
+                prompt = f"{context}\n\u95ee\u9898: {question}"
                 cache_key = f"{course_name}_{question}"
                 if cache_key in cached_answers:
                     answers.append(cached_answers[cache_key])
@@ -1247,56 +1254,47 @@ class GradeProcessor:
                     cached_answers[cache_key] = answer
                     answers.append(answer)
                     try:
-                        with open(cache_file, 'w', encoding='utf-8') as f:
+                        with open(cache_file, "w", encoding="utf-8") as f:
                             json.dump(cached_answers, f, indent=4, ensure_ascii=False)
-                    except Exception as e:
-                        print(f"保存缓存失败: {str(e)}")
-        
-        df = pd.DataFrame(df_data)
+                    except Exception:
+                        pass
+
+        rows = []
+        rows.append("\uff08\u4e8c\uff09\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+        answer_idx = 0
+        for i in range(1, num_objectives + 1):
+            rows.append(f"{i}.\u8bfe\u7a0b\u76ee\u6807{i}")
+            rows.append("\uff08\u0031\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790\uff1a")
+            rows.append(answers[answer_idx] if answers else "")
+            answer_idx += 1
+            rows.append("\uff08\u0032\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd\uff1a")
+            rows.append(answers[answer_idx] if answers else "")
+            answer_idx += 1
+            rows.append("")
+
         try:
-            with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Sheet1', startrow=0)
-                
-                worksheet = writer.sheets['Sheet1']
-                
-                # 设置“课程目标1”到“课程总目标”行的内容居中（前 6 行）
-                for row in range(2, 8):
-                    for col in range(1, 6):
-                        cell = worksheet.cell(row=row, column=col)
-                        cell.alignment = Alignment(horizontal='center', vertical='center')
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "\u8bfe\u7a0b\u5206\u76ee\u6807\u5206\u6790"
+            thin = Side(border_style="thin", color="000000")
+            border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            ws.column_dimensions["A"].width = 60
 
-                # 写入 DeepSeek API 的问题和回答
-                start_row = len(df) + 2  # 第 8 行开始
-                # 添加分类标题“课程目标达成情况、存在问题分析及改进措施”
-                worksheet[f'A{start_row}'].value = "课程目标达成情况、存在问题分析及改进措施"
-                worksheet[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                end_row = start_row + len(questions) - 1  # 第 18 行结束
-                worksheet.merge_cells(f'A{start_row}:A{end_row}')
+            for row_idx, text in enumerate(rows, start=1):
+                cell = ws.cell(row=row_idx, column=1, value=text)
+                cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="left")
+                cell.border = border
+                if row_idx == 1:
+                    cell.font = Font(bold=True)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                if text == "" or (answers and text in answers):
+                    ws.row_dimensions[row_idx].height = 60
 
-                # 写入问题和回答，并设置格式
-                for i, (question, answer) in enumerate(zip(questions, answers)):
-                    row = start_row + i
-                    worksheet[f'B{row}'].value = question
-                    worksheet[f'C{row}'].value = answer
-                    worksheet.merge_cells(f'C{row}:E{row}')
-                    # 设置字体大小为 10 号，垂直居中
-                    cell_b = worksheet[f'B{row}']
-                    cell_c = worksheet[f'C{row}']
-                    cell_b.font = Font(size=10)
-                    cell_c.font = Font(size=10)
-                    cell_b.alignment = Alignment(wrap_text=True, vertical='center')
-                    cell_c.alignment = Alignment(wrap_text=True, vertical='center')
-                    worksheet.row_dimensions[row].height = 80
-
-                # 设置列宽（单位为字符宽度）
-                worksheet.column_dimensions['A'].width = 22
-                worksheet.column_dimensions['B'].width = 22
-                worksheet.column_dimensions['C'].width = 22
-                worksheet.column_dimensions['D'].width = 22
-                worksheet.column_dimensions['E'].width = 22
+            wb.save(output_file)
         except Exception as e:
             print(f"Error writing to Excel: {str(e)}")
             raise
+
 
     def store_api_key(self, api_key: str) -> None:
         """存储API Key"""
