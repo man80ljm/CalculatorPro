@@ -1299,24 +1299,22 @@ class GradeProcessor:
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd"
-            ws.column_dimensions["A"].width = 75
+            ws.column_dimensions["A"].width = 8
+            ws.column_dimensions["B"].width = 67
             ws.sheet_view.showGridLines = False
 
             for row_idx, text in enumerate(rows, start=1):
-                cell = ws.cell(row=row_idx, column=1)
+                cell = ws.cell(row=row_idx, column=2)
                 if text in heading_texts:
                     cell.value = text
                     cell.font = heading_font
                     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 else:
-                    display_text = f"\u3000\u3000{text}" if text else ""
+                    display_text = text if text else ""
                     cell.value = display_text
                     cell.font = body_font
                     cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
                 cell.border = no_border
-                if text == overall_answer or (answers and text in answers):
-                    ws.row_dimensions[row_idx].height = 60
-
             wb.save(output_file)
         except Exception as e:
             print(f"Error writing to Excel: {str(e)}")
@@ -1347,4 +1345,3 @@ class GradeProcessor:
             if self.status_label:
                 self.status_label.setText("\u751f\u6210AI\u5206\u6790\u62a5\u544a\u5931\u8d25")
             raise ValueError(f"\u751f\u6210AI\u5206\u6790\u62a5\u544a\u5931\u8d25: {str(e)}")
-

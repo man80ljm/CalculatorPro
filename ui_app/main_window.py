@@ -253,10 +253,12 @@ class GenerateReportThread(QThread):
             for i, question in enumerate(questions):
                 self.progress.emit(f"\u6b63\u5728\u751f\u6210 {i+1}/{total_questions} \u4e2a\u95ee\u9898...")
                 self.progress_value.emit(i + 1)
-                if i == 0:
-                    prompt = f"{context}\n\u95ee\u9898: {question}\n\u8bf7\u4ee5{self.report_style}\u98ce\u683c\u56de\u7b54\u3002"
-                else:
-                    prompt = f"{context}\n\u95ee\u9898: {question}\n\u8bf7\u4ee5{self.report_style}\u98ce\u683c\u56de\u7b54\uff0c\u5b57\u6570\u5c3d\u91cf\u63a5\u8fd1{self.word_limit}\u5b57\uff0c\u4e0d\u5c11\u4e8e{min_chars}\u5b57\u3002"
+                prompt = (
+                    f"{context}\n\u95ee\u9898: {question}\n"
+                    f"\u8bf7\u4ee5{self.report_style}\u98ce\u683c\u56de\u7b54\uff0c\u7528\u4e00\u6bb5\u8bdd\u8868\u8ff0\uff0c\u4e0d\u5206\u70b9\u9610\u8ff0\uff0c"
+                    f"\u4e0d\u8981\u4f7f\u7528Markdown\u6216\u6807\u9898\u7b26\u53f7\uff08\u5982###\u3001**\u7b49\uff09\u3002"
+                    f"\u5b57\u6570\u5c3d\u91cf\u63a5\u8fd1{self.word_limit}\u5b57\uff0c\u4e0d\u5c11\u4e8e{min_chars}\u5b57\u3002"
+                )
                 answer = self.processor.call_deepseek_api(prompt)
                 if "\u8d85\u65f6" in answer:
                     self.progress.emit(f"\u7b2c{i+1}/{total_questions}\u4e2a\u95ee\u9898\u8d85\u65f6\uff0c\u5df2\u8bb0\u5f55\u63d0\u793a\u3002")
@@ -447,8 +449,8 @@ class GradeAnalysisApp(QMainWindow):
         self.setWindowTitle('CalculatorPro')
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "..", "calculator.ico")))
         self.setMinimumWidth(885)
-        self.setMinimumHeight(450)
-        self.resize(885, 450)
+        self.setMinimumHeight(465)
+        self.resize(885, 465)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         outer_layout = QVBoxLayout(central_widget)
