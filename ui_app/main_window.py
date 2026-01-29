@@ -885,6 +885,16 @@ class GradeAnalysisApp(QMainWindow):
         if not self.processor:
              QMessageBox.warning(self, "提示", "请先执行成绩处理")
              return
+        if not self.api_key:
+             QMessageBox.warning(self, "\u63d0\u793a", "\u8bf7\u5148\u8bbe\u7f6eAPI Key")
+             return
+        # ensure processor has api key before generating report
+        try:
+             if hasattr(self.processor, "store_api_key"):
+                 self.processor.store_api_key(self.api_key)
+        except Exception:
+             QMessageBox.warning(self, "\u63d0\u793a", "API Key\u8bbe\u7f6e\u5931\u8d25")
+             return
         report_style = self.combo_style.currentText()
         self.report_thread = GenerateReportThread(self.processor, self.num_objectives, self.current_achievement, report_style)
         self.report_thread.finished.connect(self.on_report_finished)
