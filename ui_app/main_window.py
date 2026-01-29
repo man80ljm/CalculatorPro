@@ -501,9 +501,9 @@ class GradeAnalysisApp(QMainWindow):
         # Row 2: 课程考核与课程目标对应关系 / 毕业要求指标点 / 设置
         top_btns_row2.addStretch()
         top_btns_row2.addWidget(self.relation_btn)
-        top_btns_row2.addSpacing(63)
+        top_btns_row2.addSpacing(44)
         top_btns_row2.addWidget(self.grad_req_btn)
-        top_btns_row2.addSpacing(63)
+        top_btns_row2.addSpacing(82)
         top_btns_row2.addWidget(self.settings_btn)
         top_btns_row2.addStretch()
 
@@ -573,8 +573,27 @@ class GradeAnalysisApp(QMainWindow):
         self.ai_report_btn = QPushButton("生成报告")
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setFixedHeight(16)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setStyleSheet("QProgressBar { padding: 0px; text-align: right; } QProgressBar::chunk { background-color: #1E88E5; }")
         self.status_label = QLabel("")
+        # ?????????????????????
+        self.status_bar = self.statusBar()
+        self.status_bar.setFixedHeight(24)
+        self.status_bar.setContentsMargins(30, 0, 30, 0)
+        self.status_bar.setStyleSheet("QStatusBar { background: #E6E6E6; }")
+
+        self.status_container = QWidget()
+        status_layout = QHBoxLayout(self.status_container)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(8)
+        status_layout.addWidget(self.status_label)
+
+        self.progress_bar.setMinimumWidth(210)
+        self.progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        status_layout.addWidget(self.progress_bar, 1)
+
+        self.status_bar.addWidget(self.status_container, 1)
         self.download_btn.clicked.connect(self.open_template_download)
         self.import_btn.clicked.connect(self.select_file)
         self.export_btn.clicked.connect(self.start_analysis)
@@ -598,15 +617,6 @@ class GradeAnalysisApp(QMainWindow):
         tab_panel_layout.setSpacing(4)
         tab_panel_layout.addWidget(self.control_bar, alignment=Qt.AlignmentFlag.AlignHCenter)
         tab_panel_layout.addLayout(action_row)
-        # 底部状态 / 进度条：悬浮在main_card内部，不受布局控制
-        self.status_panel = QFrame(self.main_card)
-        self.status_panel.setObjectName("StatusPanel")
-        self.status_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        status_layout = QVBoxLayout(self.status_panel)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setSpacing(3)
-        status_layout.addWidget(self.status_label)
-        status_layout.addWidget(self.progress_bar)
         outer_layout.addWidget(self.main_card)
         self.fwd_layout = QVBoxLayout(self.tab_forward)
         self.fwd_layout.setContentsMargins(0, 0, 0, 0)
@@ -617,27 +627,12 @@ class GradeAnalysisApp(QMainWindow):
         self.fwd_layout.addWidget(self.tab_panel)
         self._sync_tabs_height()
         self.on_tab_changed(0)
-        self._position_status_panel()
 
     def _sync_tabs_height(self):
         """同步 Tab 容器的高度"""
         tabbar_h = self.tabs.tabBar().sizeHint().height()
         panel_h = self.tab_panel.height()
         self.tabs.setFixedHeight(tabbar_h + panel_h)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._position_status_panel()
-
-    def _position_status_panel(self):
-        if not hasattr(self, "status_panel"):
-            return
-        margin_x = 10
-        margin_bottom = 2
-        width = max(10, self.main_card.width() - margin_x * 2)
-        height = self.status_panel.sizeHint().height()
-        y = self.main_card.height() - height - margin_bottom
-        self.status_panel.setGeometry(margin_x, y, width, height)
 
     def on_tab_changed(self, index):
         """切换正向/逆向模式时，动态调整面板位置及 UI 状态"""

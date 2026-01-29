@@ -11,6 +11,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from apply_noise import GradeReverseEngine
 from utils import normalize_score, get_grade_level, calculate_final_score, calculate_achievement_level, adjust_column_widths
 import time
+import random
 
 class GradeProcessor:
     def __init__(self, course_name_input, num_objectives_input, weight_inputs, usual_ratio_input,
@@ -892,7 +893,7 @@ class GradeProcessor:
                 ])
                 row_cursor += 1
 
-            achievement = round(obj_actual_sum / obj_weight_sum, 4) if obj_weight_sum > 0 else 0
+            achievement = round(obj_actual_sum / obj_weight_sum, 3) if obj_weight_sum > 0 else 0
             current_achievement[obj_name] = achievement
             prev_val = prev_data.get(obj_name, 0) if prev_data else 0
             prev_val = 0 if prev_val is None else prev_val
@@ -908,15 +909,21 @@ class GradeProcessor:
             total_obj_weight += obj_weight_sum
             total_obj_actual += obj_actual_sum
 
-        total_attainment = round(total_obj_actual / total_obj_weight, 4) if total_obj_weight > 0 else 0
+        total_attainment = round(total_obj_actual / total_obj_weight, 3) if total_obj_weight > 0 else 0
         current_achievement["总达成度"] = total_attainment
         self.current_achievement = current_achievement
         expected_attainment = 0.7
         prev_total = 0
-        for key in ["\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c", "\u8bfe\u7a0b\u603b\u76ee\u6807", "\u8bfe\u7a0b\u603b\u8fbe\u6210\u503c", "total_value"]:
+        for key in ["课程目标达成值", "课程总目标", "课程总达成值", "total_value"]:
             if key in prev_data:
                 prev_total = prev_data.get(key, 0) or 0
                 break
+        if prev_total and total_attainment:
+            low = min(prev_total, total_attainment)
+            high = max(prev_total, total_attainment)
+            expected_attainment = round(random.uniform(low, high), 3)
+        else:
+            expected_attainment = total_attainment
 
         def _append_summary(label, value=None, prev=None):
             display_val = value if value is not None else (prev if prev is not None else 0)
