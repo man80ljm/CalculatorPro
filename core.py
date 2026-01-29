@@ -12,6 +12,12 @@ from apply_noise import GradeReverseEngine
 from utils import normalize_score, get_grade_level, calculate_final_score, calculate_achievement_level, adjust_column_widths
 import time
 import random
+from docx import Document
+from docx.shared import Pt, Cm
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 class GradeProcessor:
     def __init__(self, course_name_input, num_objectives_input, weight_inputs, usual_ratio_input,
@@ -537,6 +543,118 @@ class GradeProcessor:
         safe = re.sub(r'[\\/:*"<>|?\\r\\n\\t]', "_", str(name)).strip()
         return safe or "\u672a\u547d\u540d"
 
+    
+    def _set_docx_cell_margins(self, cell, top=0, bottom=0, left=0, right=0):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcMar = tcPr.find(qn('w:tcMar'))
+        if tcMar is None:
+            tcMar = OxmlElement('w:tcMar')
+            tcPr.append(tcMar)
+        for tag, val in (('top', top), ('bottom', bottom), ('left', left), ('right', right)):
+            node = tcMar.find(qn(f'w:{tag}'))
+            if node is None:
+                node = OxmlElement(f'w:{tag}')
+                tcMar.append(node)
+            node.set(qn('w:w'), str(val))
+            node.set(qn('w:type'), 'dxa')
+
+    def _set_docx_cell_border(self, cell, size=4):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        borders = tcPr.find(qn('w:tcBorders'))
+        if borders is None:
+            borders = OxmlElement('w:tcBorders')
+            tcPr.append(borders)
+        for edge in ('top', 'left', 'bottom', 'right'):
+            edge_tag = qn(f'w:{edge}')
+            element = borders.find(edge_tag)
+            if element is None:
+                element = OxmlElement(f'w:{edge}')
+                borders.append(element)
+            element.set(qn('w:val'), 'single')
+            element.set(qn('w:sz'), str(size))  # 0.5pt -> 4
+            element.set(qn('w:color'), '000000')
+
+    def _export_stats_docx(self, composition_text, max_score, min_score, avg_score, counts, ratios):
+        root = os.path.abspath(os.path.dirname(__file__))
+        output_dir = os.path.join(root, 'outputs')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, '\u0032.\u8bfe\u7a0b\u6210\u7ee9\u7edf\u8ba1\u8868.docx')
+
+        doc = Document()
+        table = doc.add_table(rows=5, cols=6)
+        table.autofit = False
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        total_cm = 14.64
+        first_cm = 3.75
+        other_cm = (total_cm - first_cm) / 5
+
+        data = [
+            # 第一行：成绩构成（假设第一列是标题）
+            ["成绩构成", composition_text.strip(), "", "", "", ""],
+            
+            # 第二行：最高成绩
+            ["最高成绩", max_score, "最低成绩", min_score, "平均成绩", avg_score],
+            
+            # 第三行：成绩等级（这里是报错的重点，必须用 \n 换行）
+            ["成绩等级", "90-100\n(优秀)", "80-89\n(良好)", "70-79\n(中等)", "60-69\n(及格)", "<60\n(不及格)"],
+            
+            # 第四行：人数
+            ["人数"] + list(counts),
+            
+            # 第五行：占考核人数的比例
+            ["占考核人数的比例"] + [f"{r*100:.2f}%" for r in ratios],
+        ]
+
+        bold_coords = {
+            (0,0),
+            (1,0), (1,2), (1,4),
+            (2,0), (2,1), (2,2), (2,3), (2,4), (2,5),
+            (3,0),
+            (4,0),
+        }
+
+        # === 循环部分修改 ===
+        for r_idx, row_vals in enumerate(data):
+            row = table.rows[r_idx]
+            for c_idx in range(6):
+                # 【核心修复】：对于第1行(r_idx=0)，只处理前两列，跳过后面被合并的列
+                if r_idx == 0 and c_idx > 1:
+                    continue
+
+                cell = row.cells[c_idx]
+                cell.width = Cm(first_cm if c_idx == 0 else other_cm)
+                cell.text = "" # 清除可能存在的默认标记
+                
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                
+                # 获取要写入的内容
+                text_content = str(row_vals[c_idx]) if c_idx < len(row_vals) else ""
+                run = p.add_run(text_content)
+                
+                # 设置字体
+                run.font.name = "FangSong"
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), "FangSong") # 这里的中文名对应 FangSong
+                run.font.size = Pt(12)
+                
+                if (r_idx, c_idx) in bold_coords:
+                    run.bold = True
+                
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                self._set_docx_cell_border(cell, size=4)
+                self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
+
+        # 最后执行合并，这时候被合并的单元格是干净的，不会有空行
+        table.cell(0,1).merge(table.cell(0,5))
+        
+        doc.save(output_path)
+        return output_path
+
     def _get_links(self):
         payload = self.relation_payload or {}
         return payload.get("links", [])
@@ -797,6 +915,27 @@ class GradeProcessor:
         ])
         stats_ws.append(["\u4eba\u6570"] + counts)
         stats_ws.append(["\u5360\u8003\u6838\u4eba\u6570\u7684\u6bd4\u4f8b"] + [f"{r*100:.2f}%" for r in ratios])
+        self._export_stats_docx(composition_text, max_score, min_score, avg_score, counts, ratios)
+
+        # ??????????????/????????
+        base_font = Font(name="\u4eff\u5b8b", size=12)
+        bold_font = Font(name="\u4eff\u5b8b", size=12, bold=True)
+        fixed_cells = {
+            "A1", "A2", "C2", "E2", "A3", "A4", "A5",
+            "B3", "C3", "D3", "E3", "F3",
+        }
+        for r in stats_ws.iter_rows(min_row=1, max_row=5, min_col=1, max_col=6):
+            for cell in r:
+                cell.font = bold_font if cell.coordinate in fixed_cells else base_font
+
+        # ?????? 14.64cm?A ? 3.75cm?????
+        total_cm = 14.64
+        first_cm = 3.75
+        other_cm = (total_cm - first_cm) / 5
+        cm_to_width = 4.0  # ????
+        stats_ws.column_dimensions["A"].width = round(first_cm * cm_to_width, 2)
+        for col in ["B", "C", "D", "E", "F"]:
+            stats_ws.column_dimensions[col].width = round(other_cm * cm_to_width, 2)
 
         # ??
         stat_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -807,9 +946,6 @@ class GradeProcessor:
                 cell.border = stat_border
 
         stats_ws.row_dimensions[3].height = 36
-        stats_ws.column_dimensions["A"].width = 18
-        for col in ["B", "C", "D", "E", "F"]:
-            stats_ws.column_dimensions[col].width = 14
         # EVAL_TABLE_5
         eval_wb = openpyxl.Workbook()
         eval_ws = eval_wb.active
@@ -1102,7 +1238,27 @@ class GradeProcessor:
             "<60\n(\u4e0d\u53ca\u683c)",
         ])
         stats_ws.append(["\u4eba\u6570"] + counts)
-        stats_ws.append(["\u5360\u8003\u6838\u4eba\u6570\u7684\u6bd4\u4f8b"] + [f"{r*100:.2f}%" for r in ratios])
+        self._export_stats_docx(composition_text, max_score, min_score, avg_score, counts, ratios)
+
+        # ??????????????/????????
+        base_font = Font(name="\u4eff\u5b8b", size=12)
+        bold_font = Font(name="\u4eff\u5b8b", size=12, bold=True)
+        fixed_cells = {
+            "A1", "A2", "C2", "E2", "A3", "A4", "A5",
+            "B3", "C3", "D3", "E3", "F3",
+        }
+        for r in stats_ws.iter_rows(min_row=1, max_row=5, min_col=1, max_col=6):
+            for cell in r:
+                cell.font = bold_font if cell.coordinate in fixed_cells else base_font
+
+        # ?????? 14.64cm?A ? 3.75cm?????
+        total_cm = 14.64
+        first_cm = 3.75
+        other_cm = (total_cm - first_cm) / 5
+        cm_to_width = 4.0  # ????
+        stats_ws.column_dimensions["A"].width = round(first_cm * cm_to_width, 2)
+        for col in ["B", "C", "D", "E", "F"]:
+            stats_ws.column_dimensions[col].width = round(other_cm * cm_to_width, 2)
 
         stat_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
         stat_border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -1112,9 +1268,6 @@ class GradeProcessor:
                 cell.border = stat_border
 
         stats_ws.row_dimensions[3].height = 36
-        stats_ws.column_dimensions["A"].width = 18
-        for col in ["B", "C", "D", "E", "F"]:
-            stats_ws.column_dimensions[col].width = 14
 
 
         output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
