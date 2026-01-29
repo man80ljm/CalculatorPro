@@ -16,7 +16,7 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 class GradeProcessor:
@@ -655,6 +655,138 @@ class GradeProcessor:
         doc.save(output_path)
         return output_path
 
+    
+    def _export_grad_req_docx(self, grad_req_map):
+        from docx import Document
+        from docx.shared import Cm, Pt
+        from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ROW_HEIGHT_RULE, WD_ALIGN_VERTICAL
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        
+        root = os.path.abspath(os.path.dirname(__file__))
+        output_dir = os.path.join(root, 'outputs')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, '3.课程目标与毕业要求的对应关系表.docx')
+
+        doc = Document()
+        
+        # 定义列宽（厘米）
+        col_widths_cm = [2.79, 3.37, 8.48]
+        total_cm = sum(col_widths_cm)
+        
+        # 计算百分比
+        col_percentages = [int((w / total_cm) * 5000) for w in col_widths_cm]
+        
+        # 创建表格
+        rows_count = max(1, len(grad_req_map)) + 1
+        table = doc.add_table(rows=rows_count, cols=3)
+        tbl = table._element
+        
+        # 设置表格属性
+        tblPr = tbl.tblPr
+        if tblPr is None:
+            tblPr = OxmlElement('w:tblPr')
+            tbl.insert(0, tblPr)
+        
+        # 清除旧设置
+        for child in list(tblPr):
+            if child.tag in (qn('w:tblW'), qn('w:tblLayout')):
+                tblPr.remove(child)
+        
+        # 设置表格宽度为 100%
+        tblW = OxmlElement('w:tblW')
+        tblW.set(qn('w:w'), '5000')
+        tblW.set(qn('w:type'), 'pct')
+        tblPr.append(tblW)
+        
+        # 设置固定布局
+        tblLayout = OxmlElement('w:tblLayout')
+        tblLayout.set(qn('w:type'), 'fixed')
+        tblPr.append(tblLayout)
+        
+        # 设置表格网格（这个保留，定义列的比例）
+        tblGrid = tbl.find(qn('w:tblGrid'))
+        if tblGrid is None:
+            tblGrid = OxmlElement('w:tblGrid')
+            tbl.insert(1, tblGrid)
+        else:
+            for child in list(tblGrid):
+                tblGrid.remove(child)
+        
+        # 添加网格列
+        for pct in col_percentages:
+            gridCol = OxmlElement('w:gridCol')
+            gridCol.set(qn('w:w'), str(pct))
+            tblGrid.append(gridCol)
+        
+        # ===【关键修复】删除所有单元格的 tcW 宽度设置===
+        # 这样就相当于取消了"指定宽度"的勾选
+        for row in table.rows:
+            for cell in row.cells:
+                tc = cell._element
+                tcPr = tc.get_or_add_tcPr()
+                
+                # 删除所有 tcW 元素（这就是取消"指定宽度"勾选）
+                for tcW in list(tcPr.findall(qn('w:tcW'))):
+                    tcPr.remove(tcW)
+                
+                # 如果 tcPr 为空，也可以删除它
+                if len(tcPr) == 0:
+                    tc.remove(tcPr)
+        
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        
+        # 表头
+        headers = ["课程目标", "支撑的毕业要求", "支撑的毕业要求指标点"]
+        for c_idx, title in enumerate(headers):
+            cell = table.cell(0, c_idx)
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            run = p.add_run(title)
+            run.font.name = "FangSong"
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+            run.font.size = Pt(12)
+            run.bold = True
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            self._set_docx_cell_border(cell, size=4)
+
+        # 数据行
+        rows_data = grad_req_map if grad_req_map else []
+        for r_idx in range(1, len(table.rows)):
+            obj_name = f"课程目标{r_idx}"
+            requirement = ""
+            indicator = ""
+            
+            if r_idx - 1 < len(rows_data):
+                row = rows_data[r_idx - 1]
+                obj_name = row.get('objective', obj_name)
+                requirement = row.get('requirement', "")
+                indicator = row.get('indicator', "")
+
+            for c_idx, val in enumerate([obj_name, requirement, indicator]):
+                cell = table.cell(r_idx, c_idx)
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                run = p.add_run(str(val))
+                run.font.name = "FangSong"
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+                run.font.size = Pt(12)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                self._set_docx_cell_border(cell, size=4)
+            
+            table.rows[r_idx].height = Cm(1)
+            table.rows[r_idx].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+
+        table.rows[0].height = Cm(1)
+        table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+
+        doc.save(output_path)
+        return output_path
     def _get_links(self):
         payload = self.relation_payload or {}
         return payload.get("links", [])

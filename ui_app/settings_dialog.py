@@ -316,6 +316,82 @@ class SettingsDialog(QDialog):
         doc.save(output_path)
         return output_path
 
+
+
+    def _export_grad_req_docx(self, grad_req_map):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        output_dir = os.path.join(root, 'outputs')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(
+            output_dir,
+            "3.\u8bfe\u7a0b\u76ee\u6807\u4e0e\u6bd5\u4e1a\u8981\u6c42\u7684\u5bf9\u5e94\u5173\u7cfb\u8868.docx",
+        )
+
+        doc = Document()
+        rows_count = max(1, len(grad_req_map)) + 1
+        table = doc.add_table(rows=rows_count, cols=3)
+        table.autofit = False
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        total_cm = 14.64
+        col1 = 2.79
+        col2 = 3.37
+        col3 = total_cm - col1 - col2
+        col_widths = [col1, col2, col3]
+
+        headers = [
+            "\u8bfe\u7a0b\u76ee\u6807",
+            "\u652f\u6491\u7684\u6bd5\u4e1a\u8981\u6c42",
+            "\u652f\u6491\u7684\u6bd5\u4e1a\u8981\u6c42\u6307\u6807\u70b9",
+        ]
+        for c_idx, title in enumerate(headers):
+            cell = table.cell(0, c_idx)
+            cell.width = Cm(col_widths[c_idx])
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            run = p.add_run(title)
+            run.font.name = "\u4eff\u5b8b"
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), "\u4eff\u5b8b")
+            run.font.size = Pt(12)
+            run.bold = True
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            self._set_cell_border(cell, size=4)
+
+        for r in range(1, rows_count):
+            obj_name = f"\u8bfe\u7a0b\u76ee\u6807{r}"
+            requirement = ""
+            indicator = ""
+            if r - 1 < len(grad_req_map):
+                row = grad_req_map[r - 1]
+                obj_name = row.get('objective', obj_name)
+                requirement = row.get('requirement', '')
+                indicator = row.get('indicator', '')
+
+            for c_idx, val in enumerate([obj_name, requirement, indicator]):
+                cell = table.cell(r, c_idx)
+                cell.width = Cm(col_widths[c_idx])
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                run = p.add_run(str(val))
+                run.font.name = "\u4eff\u5b8b"
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), "\u4eff\u5b8b")
+                run.font.size = Pt(12)
+                run.bold = (c_idx == 0)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                self._set_cell_border(cell, size=4)
+                table.rows[r].height = Cm(1)
+                table.rows[r].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+
+        table.rows[0].height = Cm(1)
+        table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+
+        doc.save(output_path)
+        return output_path
+
     def _on_save(self):
         try:
             new_api = self.api_input.text().strip()
@@ -338,6 +414,11 @@ class SettingsDialog(QDialog):
                     self._export_course_basic_word(getattr(parent, 'course_basic_info', {}) or {})
                 except Exception as exc:
                     export_error = str(exc)
+
+                try:
+                    self._export_grad_req_docx(getattr(parent, 'grad_req_map', []) or [])
+                except Exception as exc:
+                    export_error = (export_error + ' ; ' if export_error else '') + str(exc)
 
             if export_error:
                 QMessageBox.warning(self, "提示", f"保存成功，但生成课程基本信息表失败: {export_error}")
