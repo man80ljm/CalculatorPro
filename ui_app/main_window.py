@@ -449,8 +449,8 @@ class GradeAnalysisApp(QMainWindow):
         self.setWindowTitle('CalculatorPro')
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "..", "calculator.ico")))
         self.setMinimumWidth(885)
-        self.setMinimumHeight(465)
-        self.resize(885, 465)
+        self.setMinimumHeight(450)
+        self.resize(885, 450)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         outer_layout = QVBoxLayout(central_widget)
@@ -573,6 +573,7 @@ class GradeAnalysisApp(QMainWindow):
         self.ai_report_btn = QPushButton("生成报告")
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
+        self.progress_bar.setFixedHeight(8)
         self.status_label = QLabel("")
         self.download_btn.clicked.connect(self.open_template_download)
         self.import_btn.clicked.connect(self.select_file)
@@ -597,8 +598,15 @@ class GradeAnalysisApp(QMainWindow):
         tab_panel_layout.setSpacing(4)
         tab_panel_layout.addWidget(self.control_bar, alignment=Qt.AlignmentFlag.AlignHCenter)
         tab_panel_layout.addLayout(action_row)
-        card_layout.addWidget(self.status_label)
-        card_layout.addWidget(self.progress_bar)
+        # 底部状态 / 进度条：悬浮在main_card内部，不受布局控制
+        self.status_panel = QFrame(self.main_card)
+        self.status_panel.setObjectName("StatusPanel")
+        self.status_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        status_layout = QVBoxLayout(self.status_panel)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(3)
+        status_layout.addWidget(self.status_label)
+        status_layout.addWidget(self.progress_bar)
         outer_layout.addWidget(self.main_card)
         self.fwd_layout = QVBoxLayout(self.tab_forward)
         self.fwd_layout.setContentsMargins(0, 0, 0, 0)
@@ -609,12 +617,27 @@ class GradeAnalysisApp(QMainWindow):
         self.fwd_layout.addWidget(self.tab_panel)
         self._sync_tabs_height()
         self.on_tab_changed(0)
+        self._position_status_panel()
 
     def _sync_tabs_height(self):
         """同步 Tab 容器的高度"""
         tabbar_h = self.tabs.tabBar().sizeHint().height()
         panel_h = self.tab_panel.height()
         self.tabs.setFixedHeight(tabbar_h + panel_h)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_status_panel()
+
+    def _position_status_panel(self):
+        if not hasattr(self, "status_panel"):
+            return
+        margin_x = 10
+        margin_bottom = 2
+        width = max(10, self.main_card.width() - margin_x * 2)
+        height = self.status_panel.sizeHint().height()
+        y = self.main_card.height() - height - margin_bottom
+        self.status_panel.setGeometry(margin_x, y, width, height)
 
     def on_tab_changed(self, index):
         """切换正向/逆向模式时，动态调整面板位置及 UI 状态"""
@@ -831,22 +854,31 @@ class GradeAnalysisApp(QMainWindow):
             self.status_label.setText(f"已选择文件: {os.path.basename(file_name)}")
 
     def start_analysis(self):
-        """开始处理成绩数据"""
+        """开始处理并导出结果。"""
         if not self.input_file:
             QMessageBox.warning(self, '错误', '请先选择成绩单文件')
             return
-        
-        # 映射 UI 选项到代码枚举
+
+        # 底部状态栏和进度条
+        self.status_label.setText("正在导出...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)
+
+        # 映射 UI 选项到代码层参数
         mock_usual = MockInput(str(self.usual_ratio))
         mock_midterm = MockInput(str(self.midterm_ratio))
         mock_final = MockInput(str(self.final_ratio))
         mock_num_obj = MockInput(str(self.num_objectives))
 
         if not self.weight_inputs and self.num_objectives > 0:
-             avg = 1.0 / self.num_objectives
-             self.weight_inputs = [MockInput(str(avg)) for _ in range(self.num_objectives)]
+            avg = 1.0 / self.num_objectives
+            self.weight_inputs = [MockInput(str(avg)) for _ in range(self.num_objectives)]
 
-        spread_mode_map = {'大跨度（14-23分）': 'large', '中跨度（7-13分）': 'medium', '小跨度（2-6分）': 'small'}
+        spread_mode_map = {
+            '大跨度（14-23分）': 'large',
+            '中跨度（7-13分）': 'medium',
+            '小跨度（2-6分）': 'small'
+        }
         dist_mode_map = {
             '标准正态': 'normal',
             '高分倾向': 'left_skewed',
@@ -861,8 +893,8 @@ class GradeAnalysisApp(QMainWindow):
         try:
             self.processor = GradeProcessor(
                 MockInput(self._get_course_name()),
-                mock_num_obj,        
-                self.weight_inputs,  
+                mock_num_obj,
+                self.weight_inputs,
                 mock_usual,
                 mock_midterm,
                 mock_final,
@@ -890,12 +922,22 @@ class GradeAnalysisApp(QMainWindow):
                     spread_mode=s_mode,
                     distribution=d_mode,
                 )
+
             # cache current achievement for AI report
             self.current_achievement = getattr(self.processor, 'current_achievement', {})
-            self.status_label.setText(f"处理完成，总达成度: {overall}")
-            QMessageBox.information(self, "成功", "成绩处理已完成，请导出结果。")
+            self.status_label.setText("导出成功")
+            QMessageBox.information(self, "导出成功", "导出成功")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"成绩处理失败: {str(e)}")
+            msg = str(e)
+            if ("Permission" in msg) or ("denied" in msg) or ("WinError 32" in msg) or ("被占用" in msg):
+                friendly = "导出失败，文件被占用！"
+            else:
+                friendly = f"导出失败，原因: {msg}"
+            self.status_label.setText(friendly)
+            QMessageBox.critical(self, "导出失败", friendly)
+        finally:
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setRange(0, 100)
 
     def start_generate_ai_report(self):
         if not self.processor:
@@ -935,9 +977,14 @@ class GradeAnalysisApp(QMainWindow):
         self.report_thread.start()
 
     def on_report_error(self, message: str):
-        self.status_label.setText(f"AI报告生成失败：{message}")
+        msg = str(message)
+        if ("Permission" in msg) or ("denied" in msg) or ("WinError 32" in msg) or ("\u88ab\u5360\u7528" in msg):
+            friendly = "\u751f\u6210\u5931\u8d25\uff01\u6587\u4ef6\u88ab\u5360\u7528\uff01"
+        else:
+            friendly = f"\u751f\u6210\u5931\u8d25\uff0c\u539f\u56e0: {msg}"
+        self.status_label.setText(friendly)
         self.progress_bar.setVisible(False)
-        QMessageBox.critical(self, "错误", f"AI报告生成失败：{message}")
+        QMessageBox.critical(self, "\u9519\u8bef", friendly)
 
     def on_report_progress(self, value: int):
         self.progress_bar.setValue(value)
