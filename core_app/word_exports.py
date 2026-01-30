@@ -1,4 +1,3 @@
-
 import os
 from docx import Document
 from docx.shared import Pt, Cm
@@ -45,7 +44,7 @@ class WordExportMixin:
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         output_dir = os.path.join(root, 'outputs')
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, '\u0032.\u8bfe\u7a0b\u6210\u7ee9\u7edf\u8ba1\u8868.docx')
+        output_path = os.path.join(output_dir, '2.课程成绩统计表.docx')
 
         doc = Document()
         table = doc.add_table(rows=5, cols=6)
@@ -57,11 +56,11 @@ class WordExportMixin:
         other_cm = (total_cm - first_cm) / 5
 
         data = [
-            ['\u6210\u7ee9\u6784\u6210', composition_text.strip(), '', '', '', ''],
-            ['\u6700\u9ad8\u6210\u7ee9', max_score, '\u6700\u4f4e\u6210\u7ee9', min_score, '\u5e73\u5747\u6210\u7ee9', avg_score],
-            ['\u6210\u7ee9\u7b49\u7ea7', '90-100\n(\u4f18\u79c0)', '80-89\n(\u826f\u597d)', '70-79\n(\u4e2d\u7b49)', '60-69\n(\u53ca\u683c)', '<60\n(\u4e0d\u53ca\u683c)'],
-            ['\u4eba\u6570'] + list(counts),
-            ['\u5360\u8003\u6838\u4eba\u6570\u7684\u6bd4\u4f8b'] + [f"{r*100:.2f}%" for r in ratios],
+            ['成绩构成', composition_text.strip(), '', '', '', ''],
+            ['最高成绩', max_score, '最低成绩', min_score, '平均成绩', avg_score],
+            ['成绩等级', '90-100\n(优秀)', '80-89\n(良好)', '70-79\n(中等)', '60-69\n(及格)', '<60\n(不及格)'],
+            ['人数'] + list(counts),
+            ['占考核人数的比例'] + [f"{r*100:.2f}%" for r in ratios],
         ]
 
         bold_coords = {
@@ -86,8 +85,8 @@ class WordExportMixin:
                 p.paragraph_format.space_after = Pt(0)
                 text_content = str(row_vals[c_idx]) if c_idx < len(row_vals) else ''
                 run = p.add_run(text_content)
-                run.font.name = '\u4eff\u5b8b'
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), '\u4eff\u5b8b')
+                run.font.name = '仿宋'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋')
                 run.font.size = Pt(12)
                 if (r_idx, c_idx) in bold_coords:
                     run.bold = True
@@ -100,6 +99,48 @@ class WordExportMixin:
         doc.save(output_path)
         return output_path
 
+    def _clear_cell_content(self, cell):
+        """彻底清空单元格内容"""
+        # 删除所有段落的内容
+        for paragraph in cell.paragraphs:
+            p = paragraph._element
+            # 删除段落中的所有子元素（除了pPr）
+            for child in list(p):
+                if child.tag != qn('w:pPr'):
+                    p.remove(child)
+        # 确保只保留一个段落
+        tc = cell._tc
+        for p in list(tc.findall(qn('w:p')))[1:]:
+            tc.remove(p)
+
+    def _set_cell_text_with_format(self, cell, text, bold=False, font_name='仿宋', font_size=12):
+        """设置单元格文本并格式化"""
+        self._clear_cell_content(cell)
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        run = p.add_run(text)
+        run.font.name = font_name
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+        run.font.size = Pt(font_size)
+        run.bold = bold
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    def _set_row_height(self, row, height_cm=1.0):
+        """设置行高"""
+        row.height = Cm(height_cm)
+        row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+        # 同时通过XML确保行高生效
+        trPr = row._tr.get_or_add_trPr()
+        trHeight = trPr.find(qn('w:trHeight'))
+        if trHeight is None:
+            trHeight = OxmlElement('w:trHeight')
+            trPr.append(trHeight)
+        # 1cm = 567 twips (1 twip = 1/20 pt, 1 cm ≈ 28.35 pt)
+        trHeight.set(qn('w:val'), str(int(height_cm * 567)))
+        trHeight.set(qn('w:hRule'), 'exact')
+
     def _export_eval_result_docx(self, links, obj_keys, method_avgs, prev_data,
                                  total_attainment, expected_attainment, prev_total):
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -107,7 +148,7 @@ class WordExportMixin:
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(
             output_dir,
-            '\u0035.\u57fa\u4e8e\u8003\u6838\u7ed3\u679c\u7684\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u8bc4\u4ef7\u7ed3\u679c\u8868.docx'
+            '5.基于考核结果的课程目标达成情况评价结果表.docx'
         )
 
         doc = Document()
@@ -119,29 +160,23 @@ class WordExportMixin:
         col_w = Cm(total_cm / 7)
 
         headers = [
-            '\u8bfe\u7a0b\u5206\u76ee\u6807',
-            '\u8003\u6838\u73af\u8282',
-            '\u5206\u6743\u91cd',
-            '\u5206\u503c/\u6ee1\u5206',
-            '\u5b66\u751f\u5b9e\u9645\u5f97\u5206\u5e73\u5747\u5206',
-            '\u5206\u76ee\u6807\u8fbe\u6210\u503c',
-            '\u4e0a\u4e00\u8f6e\u6559\u5b66\u5206\u76ee\u6807\u8fbe\u6210\u503c',
+            '课程分目标',
+            '考核环节',
+            '分权重',
+            '分值/满分',
+            '学生实际得分平均分',
+            '分目标达成值',
+            '上一轮教学分目标达成值',
         ]
 
         header_row = table.rows[0]
+        # 表头行高设置为自适应内容
+        header_row.height_rule = WD_ROW_HEIGHT_RULE.AUTO
+        
         for c_idx, text in enumerate(headers):
             cell = header_row.cells[c_idx]
             cell.width = col_w
-            p = cell.paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(0)
-            run = p.add_run(text)
-            run.font.name = '\u4eff\u5b8b'
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '\u4eff\u5b8b')
-            run.font.size = Pt(12)
-            run.bold = True
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            self._set_cell_text_with_format(cell, text, bold=True)
             self._set_docx_cell_border(cell, size=4)
             self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
 
@@ -150,22 +185,24 @@ class WordExportMixin:
         tblHeader.set(qn('w:val'), '1')
         trPr.append(tblHeader)
 
-        row_map = []
+        # 先收集所有数据行信息
+        all_data_rows = []  # [(obj_name, obj_rows, obj_attainment, prev_val), ...]
+        
         for idx, obj_key in enumerate(obj_keys):
-            obj_name = f"\u8bfe\u7a0b\u76ee\u6807{idx + 1}"
-            obj_start = len(table.rows)
+            obj_name = f"课程目标{idx + 1}"
+            obj_rows = []  # 该课程目标下的所有行
 
             obj_weight_sum = 0.0
             obj_actual_sum = 0.0
 
             for link in links:
                 link_name = link.get('name', '')
-                if '\u5e73\u65f6' in link_name:
-                    display_link = '\u5e73\u65f6\u6210\u7ee9'
-                elif '\u671f\u4e2d' in link_name:
-                    display_link = '\u671f\u4e2d\u8003\u6838'
-                elif '\u671f\u672b' in link_name:
-                    display_link = '\u671f\u672b\u8003\u6838'
+                if '平时' in link_name:
+                    display_link = '平时成绩'
+                elif '期中' in link_name:
+                    display_link = '期中考核'
+                elif '期末' in link_name:
+                    display_link = '期末考核'
                 else:
                     display_link = link_name
 
@@ -184,78 +221,97 @@ class WordExportMixin:
                 obj_weight_sum += support_sum * link_ratio * 100.0
                 obj_actual_sum += (actual_sum / 100.0) * link_ratio * 100.0
 
-                row_cells = table.add_row().cells
-                row_cells[0].text = obj_name
-                row_cells[1].text = display_link
-                row_cells[2].text = f"{support_sum * link_ratio * 100.0:.1f}"
-                row_cells[3].text = "100"
-                row_cells[4].text = f"{(actual_sum / 100.0) * link_ratio * 100.0:.2f}"
-                row_cells[5].text = f"{(obj_actual_sum / obj_weight_sum) if obj_weight_sum > 0 else 0:.3f}"
-                prev_val = 0
-                if prev_data:
-                    raw_prev = prev_data.get(obj_name, 0)
-                    if isinstance(raw_prev, dict):
-                        prev_val = raw_prev.get('value', 0) or 0
-                    elif isinstance(raw_prev, (int, float)):
-                        prev_val = raw_prev
-                    else:
-                        try:
-                            prev_val = float(raw_prev)
-                        except Exception:
-                            prev_val = 0
-                row_cells[6].text = f"{prev_val:.3f}" if isinstance(prev_val, (int, float)) else str(prev_val)
+                weight_text = f"{support_sum * link_ratio * 100.0:.1f}"
+                actual_text = f"{(actual_sum / 100.0) * link_ratio * 100.0:.2f}"
+                obj_rows.append((display_link, weight_text, actual_text))
 
+            # 计算达成值
+            obj_attainment = (obj_actual_sum / obj_weight_sum) if obj_weight_sum > 0 else 0
+            
+            # 获取上一轮数据
+            prev_val = 0
+            if prev_data:
+                raw_prev = prev_data.get(obj_name, 0)
+                if isinstance(raw_prev, dict):
+                    prev_val = raw_prev.get('value', 0) or 0
+                elif isinstance(raw_prev, (int, float)):
+                    prev_val = raw_prev
+                else:
+                    try:
+                        prev_val = float(raw_prev)
+                    except Exception:
+                        prev_val = 0
+
+            all_data_rows.append((obj_name, obj_rows, obj_attainment, prev_val))
+
+        # 现在创建所有数据行
+        for obj_name, obj_rows, obj_attainment, prev_val in all_data_rows:
+            obj_start = len(table.rows)
+            
+            for row_idx, (display_link, weight_text, actual_text) in enumerate(obj_rows):
+                new_row = table.add_row()
+                self._set_row_height(new_row, 1.0)
+                row_cells = new_row.cells
+                
                 for c_idx in range(7):
                     cell = row_cells[c_idx]
                     cell.width = col_w
-                    p = cell.paragraphs[0]
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.paragraph_format.space_before = Pt(0)
-                    p.paragraph_format.space_after = Pt(0)
-                    run = p.runs[0]
-                    run.font.name = '\u4eff\u5b8b'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '\u4eff\u5b8b')
-                    run.font.size = Pt(12)
-                    run.bold = False
-                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                     self._set_docx_cell_border(cell, size=4)
                     self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
+                
+                # 只在每组的第一行填充第0、5、6列
+                if row_idx == 0:
+                    # 第0列：课程分目标（加粗）
+                    self._set_cell_text_with_format(row_cells[0], obj_name, bold=True)
+                    # 第5列：分目标达成值
+                    self._set_cell_text_with_format(row_cells[5], f"{obj_attainment:.3f}", bold=False)
+                    # 第6列：上一轮达成值
+                    prev_text = f"{prev_val:.3f}" if isinstance(prev_val, (int, float)) else str(prev_val)
+                    self._set_cell_text_with_format(row_cells[6], prev_text, bold=False)
+                
+                # 第1列：考核环节（加粗）
+                self._set_cell_text_with_format(row_cells[1], display_link, bold=True)
+                # 第2列：分权重
+                self._set_cell_text_with_format(row_cells[2], weight_text, bold=False)
+                # 第3列：分值/满分
+                self._set_cell_text_with_format(row_cells[3], "100", bold=False)
+                # 第4列：学生实际得分平均分
+                self._set_cell_text_with_format(row_cells[4], actual_text, bold=False)
 
             obj_end = len(table.rows) - 1
+            
+            # 合并单元格（如果有多行）
             if obj_end > obj_start:
+                # 合并第0列
                 table.cell(obj_start, 0).merge(table.cell(obj_end, 0))
+                # 合并第5列
                 table.cell(obj_start, 5).merge(table.cell(obj_end, 5))
+                # 合并第6列
                 table.cell(obj_start, 6).merge(table.cell(obj_end, 6))
 
-            row_map.append((obj_start, obj_end))
-
         def add_total_row(label, value):
-            row_cells = table.add_row().cells
-            row_cells[0].text = label
-            row_cells[6].text = f"{value:.3f}" if isinstance(value, (int, float)) else str(value)
-            table.cell(len(table.rows) - 1, 0).merge(table.cell(len(table.rows) - 1, 5))
+            new_row = table.add_row()
+            self._set_row_height(new_row, 1.0)
+            
+            row_cells = new_row.cells
+            
             for c_idx in range(7):
                 cell = row_cells[c_idx]
                 cell.width = col_w
-                p = cell.paragraphs[0]
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(0)
-                if p.runs:
-                    run = p.runs[0]
-                else:
-                    run = p.add_run('')
-                run.font.name = '\u4eff\u5b8b'
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), '\u4eff\u5b8b')
-                run.font.size = Pt(12)
-                run.bold = True if c_idx == 0 else False
-                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                 self._set_docx_cell_border(cell, size=4)
                 self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
+            
+            # 先填充内容
+            self._set_cell_text_with_format(row_cells[0], label, bold=True)
+            value_text = f"{value:.3f}" if isinstance(value, (int, float)) else str(value)
+            self._set_cell_text_with_format(row_cells[6], value_text, bold=False)
+            
+            # 再合并单元格
+            table.cell(len(table.rows) - 1, 0).merge(table.cell(len(table.rows) - 1, 5))
 
-        add_total_row('\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c', total_attainment)
-        add_total_row('\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u671f\u671b\u503c', expected_attainment)
-        add_total_row('\u4e0a\u4e00\u8f6e\u6559\u5b66\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c', prev_total)
+        add_total_row('课程目标达成值', total_attainment)
+        add_total_row('课程目标达成期望值', expected_attainment)
+        add_total_row('上一轮教学课程目标达成值', prev_total)
 
         doc.save(output_path)
         return output_path

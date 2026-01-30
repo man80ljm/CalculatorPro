@@ -246,7 +246,6 @@ class AIReportMixin:
             overall_answer = answers[0].strip() if answers else ''
 
             rows: list[tuple[str, str]] = []
-            rows.append(('六、课程目标达成情况分析、存在问题及改进措施', 'heading'))
             rows.append(('（一）总体情况', 'heading'))
             rows.append((overall_answer, 'answer'))
             rows.append(('（二）课程分目标达成情况分析、存在问题及改进措施', 'heading'))

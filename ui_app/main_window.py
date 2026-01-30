@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import os
 import json
 import pandas as pd
@@ -17,6 +17,7 @@ from ui_app.settings_dialog import SettingsDialog
 from ui_app.course_open_dialog import CourseOpenDialog
 from ui_app.course_basic_dialog import CourseBasicDialog
 from ui_app.grad_req_dialog import GradRequirementDialog
+from core_app.report_builder import ReportBuilder
 
 # ==========================================
 # 工具类：适配旧核心逻辑的 Mock 输入
@@ -185,7 +186,7 @@ class TemplateDownloadDialog(QDialog):
     def validate_and_accept(self):
         text = self.input_count.text()
         if not text:
-            QMessageBox.warning(self, '\u63d0\u793a', '\u8bf7\u5148\u5728\u201c\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb\u201d\u4e2d\u8bbe\u7f6e\u8bfe\u7a0b\u76ee\u6807\u6570\u91cf')
+            QMessageBox.warning(self, '提示', '请先在“课程考核与课程目标对应关系”中设置课程目标数量')
             return
         self.student_count = int(text)
         self.accept()
@@ -212,36 +213,36 @@ class GenerateReportThread(QThread):
             prev_data = self.processor.previous_achievement_data or {}
             current_data = self.current_achievement or {}
 
-            overall_question = "\u6982\u8ff0\u672c\u6b21\u8bc4\u4ef7\u5de5\u4f5c\u5f00\u5c55\u7684\u603b\u4f53\u60c5\u51b5\uff0c\u53ef\u4ee5\u4ece\u6559\u5b66\u76ee\u6807\u3001\u6559\u5b66\u5185\u5bb9\u3001\u6559\u5b66\u65b9\u6cd5\u3001\u6559\u5b66\u624b\u6bb5\u3001\u6559\u5b66\u7b56\u7565\u3001\u6559\u5b66\u8d44\u6e90\u3001\u6559\u5b66\u73af\u5883\u7b49\u73af\u8282\u8fdb\u884c\u5b9e\u8d28\u6027\u5206\u6790\u3002"
+            overall_question = "概述本次评价工作开展的总体情况，可以从教学目标、教学内容、教学方法、教学手段、教学策略、教学资源、教学环境等环节进行实质性分析。"
             questions = [overall_question]
             for i in range(1, self.num_objectives + 1):
-                questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\u8fbe\u6210\u60c5\u51b5\u5206\u6790")
-                questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+                questions.append(f"课程目标{i}达成情况分析")
+                questions.append(f"课程目标{i}存在问题及改进措施")
             total_questions = len(questions)
 
-            self.progress.emit("\u6b63\u5728\u751f\u6210AI\u62a5\u544a...")
+            self.progress.emit("正在生成AI报告...")
             self.progress_value.emit(0)
 
-            context = f"\u8bfe\u7a0b\u7b80\u4ecb: {self.processor.course_description}\n"
+            context = f"课程简介: {self.processor.course_description}\n"
             for i, req in enumerate(self.processor.objective_requirements, 1):
-                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u8981\u6c42: {req}\n"
+                context += f"课程目标{i}要求: {req}\n"
             for i in range(1, self.num_objectives + 1):
-                prev_score = prev_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
-                current_score = current_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
-                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_score}\n"
-                context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_score}\n"
+                prev_score = prev_data.get(f"课程目标{i}", 0)
+                current_score = current_data.get(f"课程目标{i}", 0)
+                context += f"课程目标{i}上一学年达成度: {prev_score}\n"
+                context += f"课程目标{i}本学年达成度: {current_score}\n"
 
-            prev_total = prev_data.get("\u8bfe\u7a0b\u603b\u76ee\u6807", 0)
-            current_total = current_data.get("\u603b\u8fbe\u6210\u5ea6", 0)
+            prev_total = prev_data.get("课程总目标", 0)
+            current_total = current_data.get("总达成度", 0)
             expected_total = 0.7
-            context += f"\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c\uff08\u672c\u5b66\u5e74\uff09: {current_total}\n"
-            context += f"\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u671f\u671b\u503c: {expected_total}\n"
-            context += f"\u4e0a\u4e00\u8f6e\u6559\u5b66\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c: {prev_total}\n"
+            context += f"课程目标达成值（本学年）: {current_total}\n"
+            context += f"课程目标达成期望值: {expected_total}\n"
+            context += f"上一轮教学课程目标达成值: {prev_total}\n"
 
             min_chars = max(50, int(self.word_limit * 0.8))
 
             answers = []
-            course_name = "\u8bfe\u7a0b\u540d\u79f0"
+            course_name = "课程名称"
             try:
                 if hasattr(self.processor, "course_name_input"):
                     course_name = self.processor.course_name_input.text() or course_name
@@ -251,19 +252,19 @@ class GenerateReportThread(QThread):
                 pass
 
             for i, question in enumerate(questions):
-                self.progress.emit(f"\u6b63\u5728\u751f\u6210 {i+1}/{total_questions} \u4e2a\u95ee\u9898...")
+                self.progress.emit(f"正在生成 {i+1}/{total_questions} 个问题...")
                 self.progress_value.emit(i + 1)
                 prompt = (
-                    f"{context}\n\u95ee\u9898: {question}\n"
-                    f"\u8bf7\u4ee5{self.report_style}\u98ce\u683c\u56de\u7b54\uff0c\u7528\u4e00\u6bb5\u8bdd\u8868\u8ff0\uff0c\u4e0d\u5206\u70b9\u9610\u8ff0\uff0c"
-                    f"\u4e0d\u8981\u4f7f\u7528Markdown\u6216\u6807\u9898\u7b26\u53f7\uff08\u5982###\u3001**\u7b49\uff09\u3002"
-                    f"\u5b57\u6570\u5c3d\u91cf\u63a5\u8fd1{self.word_limit}\u5b57\uff0c\u4e0d\u5c11\u4e8e{min_chars}\u5b57\u3002"
+                    f"{context}\n问题: {question}\n"
+                    f"请以{self.report_style}风格回答，用一段话表述，不分点阐述，"
+                    f"不要使用Markdown或标题符号（如###、**等）。"
+                    f"字数尽量接近{self.word_limit}字，不少于{min_chars}字。"
                 )
                 answer = self.processor.call_deepseek_api(prompt)
-                if "\u8d85\u65f6" in answer:
-                    self.progress.emit(f"\u7b2c{i+1}/{total_questions}\u4e2a\u95ee\u9898\u8d85\u65f6\uff0c\u5df2\u8bb0\u5f55\u63d0\u793a\u3002")
-                elif "\u5931\u8d25" in answer or "\u9519\u8bef" in answer:
-                    self.progress.emit(f"\u7b2c{i+1}/{total_questions}\u4e2a\u95ee\u9898\u5931\u8d25\uff0c\u5df2\u8bb0\u5f55\u63d0\u793a\u3002")
+                if "超时" in answer:
+                    self.progress.emit(f"第{i+1}/{total_questions}个问题超时，已记录提示。")
+                elif "失败" in answer or "错误" in answer:
+                    self.progress.emit(f"第{i+1}/{total_questions}个问题失败，已记录提示。")
                 answers.append(answer)
 
             self.processor.generate_improvement_report(
@@ -272,7 +273,7 @@ class GenerateReportThread(QThread):
             self.progress_value.emit(total_questions)
             self.finished.emit()
         except Exception as e:
-            self.error.emit(f"AI\u62a5\u544a\u751f\u6210\u5931\u8d25: {str(e)}")
+            self.error.emit(f"AI报告生成失败: {str(e)}")
 
 
 class GradeAnalysisApp(QMainWindow):
@@ -936,14 +937,14 @@ class GradeAnalysisApp(QMainWindow):
              QMessageBox.warning(self, "提示", "请先执行成绩处理")
              return
         if not self.api_key:
-             QMessageBox.warning(self, "\u63d0\u793a", "\u8bf7\u5148\u8bbe\u7f6eAPI Key")
+             QMessageBox.warning(self, "提示", "请先设置API Key")
              return
         # ensure processor has api key before generating report
         try:
              if hasattr(self.processor, "store_api_key"):
                  self.processor.store_api_key(self.api_key)
         except Exception:
-             QMessageBox.warning(self, "\u63d0\u793a", "API Key\u8bbe\u7f6e\u5931\u8d25")
+             QMessageBox.warning(self, "提示", "API Key设置失败")
              return
         report_style = self.combo_style.currentText()
         try:
@@ -970,13 +971,13 @@ class GradeAnalysisApp(QMainWindow):
 
     def on_report_error(self, message: str):
         msg = str(message)
-        if ("Permission" in msg) or ("denied" in msg) or ("WinError 32" in msg) or ("\u88ab\u5360\u7528" in msg):
-            friendly = "\u751f\u6210\u5931\u8d25\uff01\u6587\u4ef6\u88ab\u5360\u7528\uff01"
+        if ("Permission" in msg) or ("denied" in msg) or ("WinError 32" in msg) or ("被占用" in msg):
+            friendly = "生成失败！文件被占用！"
         else:
-            friendly = f"\u751f\u6210\u5931\u8d25\uff0c\u539f\u56e0: {msg}"
+            friendly = f"生成失败，原因: {msg}"
         self.status_label.setText(friendly)
         self.progress_bar.setVisible(False)
-        QMessageBox.critical(self, "\u9519\u8bef", friendly)
+        QMessageBox.critical(self, "错误", friendly)
 
     def on_report_progress(self, value: int):
         self.progress_bar.setValue(value)
@@ -985,7 +986,27 @@ class GradeAnalysisApp(QMainWindow):
         self.status_label.setText("AI报告生成完成")
         self.progress_bar.setValue(self.progress_bar.maximum())
         self.progress_bar.setVisible(False)
-        QMessageBox.information(self, "成功", "AI报告已生成。")
+
+        output_report = ""
+        try:
+            root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            template_path = os.path.join(root, "report_template.docx")
+            output_dir = os.path.join(root, "outputs")
+            if os.path.exists(template_path):
+                builder = ReportBuilder(template_path, output_dir)
+                output_report = builder.build(self.course_open_info, self.course_basic_info, {})
+            else:
+                self.status_label.setText("AI报告已生成，但未找到模板文件report_template.docx")
+        except Exception as exc:
+            msg = f"拼接模板失败：{exc}"
+            self.status_label.setText(msg)
+            QMessageBox.warning(self, "警告", msg)
+            return
+
+        msg = "AI报告已生成"
+        if output_report:
+            msg = f"AI报告已生成并拼接完成：{output_report}"
+        QMessageBox.information(self, "成功", msg)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
