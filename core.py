@@ -638,8 +638,8 @@ class GradeProcessor:
                 run = p.add_run(text_content)
                 
                 # 设置字体
-                run.font.name = "FangSong"
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), "FangSong") # 这里的中文名对应 FangSong
+                run.font.name = "\u4eff\u5b8b"
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), "\u4eff\u5b8b") # 这里的中文名对应 FangSong
                 run.font.size = Pt(12)
                 
                 if (r_idx, c_idx) in bold_coords:
@@ -656,6 +656,264 @@ class GradeProcessor:
         return output_path
 
     
+    def _export_eval_result_docx(self, links, obj_keys, method_avgs, prev_data,
+                                 total_attainment, expected_attainment, prev_total):
+        root = os.path.abspath(os.path.dirname(__file__))
+        output_dir = os.path.join(root, 'outputs')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(
+            output_dir,
+            "5.基于考核结果的课程目标达成情况评价结果表.docx"
+        )
+
+        doc = Document()
+        table = doc.add_table(rows=1, cols=7)
+        table.autofit = False
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        total_cm = 14.64
+        col_w = Cm(total_cm / 7)
+
+        headers = [
+            "课程分目标",
+            "考核环节",
+            "分权重",
+            "分值/满分",
+            "学生实际得分平均分",
+            "分目标达成值",
+            "上一轮教学分目标达成值",
+        ]
+
+        header_row = table.rows[0]
+        for c_idx, text in enumerate(headers):
+            cell = header_row.cells[c_idx]
+            cell.width = col_w
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            run = p.add_run(text)
+            run.font.name = "\u4eff\u5b8b"
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), "\u4eff\u5b8b")
+            run.font.size = Pt(12)
+            run.bold = True
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            self._set_docx_cell_border(cell, size=4)
+            self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
+
+        trPr = header_row._tr.get_or_add_trPr()
+        tblHeader = OxmlElement('w:tblHeader')
+        tblHeader.set(qn('w:val'), "1")
+        trPr.append(tblHeader)
+
+        row_map = []
+        for idx, obj_key in enumerate(obj_keys):
+            obj_name = f"课程目标{idx + 1}"
+            obj_start = len(table.rows)
+
+            obj_weight_sum = 0.0
+            obj_actual_sum = 0.0
+
+            for link in links:
+                link_name = link.get("name", "")
+                if "平时" in link_name:
+                    display_link = "平时成绩"
+                elif "期中" in link_name:
+                    display_link = "期中考核"
+                elif "期末" in link_name:
+                    display_link = "期末考核"
+                else:
+                    display_link = link_name
+
+                link_ratio = float(link.get("ratio", 0))
+                methods = link.get("methods", []) or []
+
+                support_sum = 0.0
+                actual_sum = 0.0
+                for m in methods:
+                    supports = m.get("supports", {}) or {}
+                    weight = float(supports.get(obj_key, 0))
+                    support_sum += weight
+                    m_name = m.get("name")
+                    m_avg = float(method_avgs.get(m_name, 0))
+                    actual_sum += m_avg * weight
+
+                target_weight = link_ratio * 100.0 * support_sum
+                actual_score = link_ratio * actual_sum
+
+                obj_weight_sum += target_weight
+                obj_actual_sum += actual_score
+
+                row = table.add_row()
+                values = [
+                    obj_name if len(table.rows) - 1 == obj_start else "",
+                    display_link,
+                    f"{round(target_weight, 2)}",
+                    "100",
+                    f"{round(actual_score, 2)}",
+                    "",
+                    "",
+                ]
+
+                for c_idx, val in enumerate(values):
+                    cell = row.cells[c_idx]
+                    cell.width = col_w
+                    p = cell.paragraphs[0]
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    run = p.add_run(str(val))
+                    run.font.name = "\u4eff\u5b8b"
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), "\u4eff\u5b8b")
+                    run.font.size = Pt(12)
+                    if c_idx in (0, 1):
+                        run.bold = True
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    self._set_docx_cell_border(cell, size=4)
+                    self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
+
+            obj_row_count = len(table.rows) - obj_start
+            row_map.append((obj_start, obj_row_count, obj_weight_sum, obj_actual_sum, obj_name))
+
+        # ... (前面的代码不变)
+
+        for obj_start, obj_row_count, obj_weight_sum, obj_actual_sum, obj_name in row_map:
+            if obj_row_count <= 0:
+                continue
+            
+            # 1. 计算达成值
+            achievement = round(obj_actual_sum / obj_weight_sum, 3) if obj_weight_sum > 0 else 0
+            prev_val = prev_data.get(obj_name, 0) if prev_data else 0
+            prev_val = 0 if prev_val is None else prev_val
+
+            # 2. 如果需要合并（即该目标跨越多行）
+            if obj_row_count > 1:
+                # === 关键修改 ===
+                # 合并 第0列(课程目标名称), 第5列(达成值), 第6列(上一轮)
+                for col_idx in [0, 5, 6]:
+                    start_cell = table.cell(obj_start, col_idx)
+                    end_cell = table.cell(obj_start + obj_row_count - 1, col_idx)
+                    
+                    # 执行合并
+                    start_cell.merge(end_cell)
+                    
+                    # === 清理合并后产生的多余段落 ===
+                    # merge后，start_cell.text 可能会变成 "目标1\n\n\n" 这种形式
+                    # 我们要强制清空，只写我们需要的一个值
+                    
+                    text_to_write = ""
+                    if col_idx == 0:
+                        text_to_write = obj_name
+                    elif col_idx == 5:
+                        text_to_write = str(achievement)
+                    elif col_idx == 6:
+                        text_to_write = str(prev_val)
+                    
+                    # 1. 清除所有内容
+                    start_cell.text = "" 
+                    
+                    # 2. 添加唯一的段落和Run
+                    p = start_cell.paragraphs[0]
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    
+                    run = p.add_run(text_to_write)
+                    run.font.name = "FangSong"
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+                    run.font.size = Pt(12)
+                    run.bold = (col_idx == 0) # 只有第1列加粗
+                    
+                    start_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+            else:
+                # 如果只有一行（不需要合并），直接填值
+                first_row = table.rows[obj_start]
+                
+                # 填达成值
+                cell_ach = first_row.cells[5]
+                cell_ach.text = "" # 先清空防止追加
+                p = cell_ach.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(str(achievement))
+                run.font.name = "FangSong"
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+                run.font.size = Pt(12)
+                cell_ach.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                
+                # 填上一轮值
+                cell_prev = first_row.cells[6]
+                cell_prev.text = "" # 先清空
+                p = cell_prev.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(str(prev_val))
+                run.font.name = "FangSong"
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+                run.font.size = Pt(12)
+                cell_prev.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+        # ... (前面的 obj_start 循环代码保持不变) ...
+
+        # === 以下是底部汇总行的修复代码 ===
+        summary_rows = [
+            ("课程目标达成值", total_attainment),
+            ("课程目标达成期望值", expected_attainment),
+            ("上一轮教学课程目标达成值", prev_total),
+        ]
+        
+        for label, value in summary_rows:
+            row = table.add_row()
+            r_idx = len(table.rows) - 1
+            
+            # 1. 先给所有格子刷一遍基础样式（边框、宽度），防止合并后边框丢失
+            for c_idx in range(7):
+                cell = row.cells[c_idx]
+                cell.width = col_w
+                self._set_docx_cell_border(cell, size=4)
+                self._set_docx_cell_margins(cell, top=0, bottom=0, left=0, right=0)
+            
+            # 2. 处理左边的大格子 (第0-4列合并)
+            cell_label = table.cell(r_idx, 0)
+            cell_label.merge(table.cell(r_idx, 4))
+            
+            # 【关键】清空合并后产生的多余段落
+            cell_label.text = "" 
+            
+            # 重新写入标签
+            p = cell_label.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            run = p.add_run(label)
+            run.font.name = "FangSong"
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+            run.font.size = Pt(12)
+            run.bold = True
+            cell_label.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+            # 3. 处理右边的数值格子 (第5-6列合并)
+            cell_value = table.cell(r_idx, 5)
+            cell_value.merge(table.cell(r_idx, 6))
+            
+            # 【关键】清空合并后产生的多余段落
+            cell_value.text = ""
+            
+            # 重新写入数值
+            p = cell_value.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            val_str = str(value if value is not None else 0)
+            run = p.add_run(val_str)
+            run.font.name = "FangSong"
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
+            run.font.size = Pt(12)
+            run.bold = False
+            cell_value.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+        doc.save(output_path)
+        return output_path
+
     def _export_grad_req_docx(self, grad_req_map):
         from docx import Document
         from docx.shared import Cm, Pt
@@ -746,7 +1004,7 @@ class GradeProcessor:
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             run = p.add_run(title)
-            run.font.name = "FangSong"
+            run.font.name = "\u4eff\u5b8b"
             run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
             run.font.size = Pt(12)
             run.bold = True
@@ -773,7 +1031,7 @@ class GradeProcessor:
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(0)
                 run = p.add_run(str(val))
-                run.font.name = "FangSong"
+                run.font.name = "\u4eff\u5b8b"
                 run._element.rPr.rFonts.set(qn('w:eastAsia'), "仿宋")
                 run.font.size = Pt(12)
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
@@ -1225,6 +1483,10 @@ class GradeProcessor:
         detail_output_path = os.path.join(output_dir, f"{safe_name}\u6210\u7ee9\u660e\u7ec6.xlsx")
         eval_output_path = os.path.join(output_dir, f"{safe_name}\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u8bc4\u4ef7\u7ed3\u679c.xlsx")
         eval_wb.save(eval_output_path)
+        try:
+            self._export_eval_result_docx(links, obj_keys, method_avgs, prev_data, total_attainment, expected_attainment, prev_total)
+        except Exception:
+            pass
         wb.save(detail_output_path)
 
         return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)

@@ -2,6 +2,9 @@ import json
 import os
 from typing import List, Tuple, Optional
 
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIntValidator, QKeySequence, QIcon
 from PyQt6.QtWidgets import (
@@ -23,9 +26,11 @@ from PyQt6.QtWidgets import (
 
 try:
     from docx import Document
+    from docx.shared import Cm, Pt
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT, WD_ROW_HEIGHT_RULE
 except Exception:
     Document = None
 
@@ -263,7 +268,6 @@ class RelationTableSetupDialog(QDialog):
             return
         self.result_values = tuple(values)
         self.accept()
-
 
 class RelationTableEditorDialog(QDialog):
     def __init__(self, parent, objectives_count: int, usual_count: int, midterm_count: int, final_count: int, existing_payload=None):
@@ -652,7 +656,7 @@ class RelationTableEditorDialog(QDialog):
         # Check link totals
         start_row = 2
         for link_idx, count in enumerate(self.link_counts):
-            expected = 0.0 if count <= 0 else 100.0
+            expected = 0.0 if (count <= 0 or (self.link_ratios[link_idx] if link_idx < len(self.link_ratios) else 1) == 0) else 100.0
             link_total_item = self.table.item(start_row, 3 + self.objectives_count)
             actual, _ = _parse_percent_text(link_total_item.text() if link_total_item else "")
             if actual is None or actual != expected:
@@ -706,8 +710,8 @@ class RelationTableEditorDialog(QDialog):
             return
         methods_data, obj_totals, total_sum = self._collect_data()
         outputs_dir = _ensure_outputs_dir(os.getcwd())
-        output_path = os.path.join(outputs_dir, "课程考核与课程目标对应关系表.docx")
-        json_path = os.path.join(outputs_dir, "课程考核与课程目标对应关系表.json")
+        output_path = os.path.join(outputs_dir, "4.\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb\u8868.docx")
+        json_path = os.path.join(outputs_dir, "\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb\u8868.json")
         try:
             export_relation_table(
                 output_path,
@@ -751,7 +755,6 @@ class RelationTableEditorDialog(QDialog):
                 dialog = RelationTableEditorDialog(parent, *values)
                 dialog.exec()
 
-
 def _set_cell_shading(cell, fill: str):
     shading = OxmlElement("w:shd")
     shading.set(qn("w:fill"), fill)
@@ -762,6 +765,109 @@ def _set_paragraph_center(cell):
     for paragraph in cell.paragraphs:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+def _set_cell_border(cell, **kwargs):
+    """
+    设置单元格边框
+    用法:
+    _set_cell_border(cell, top={"sz": 12, "val": "single", "color": "#FF0000"}, bottom={...})
+    如果不传参数，默认给四周加上黑色细实线
+    """
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+
+    # 检查 tcBorders 标签，没有就创建
+    tcBorders = tcPr.first_child_found_in("w:tcBorders")
+    if tcBorders is None:
+        tcBorders = OxmlElement('w:tcBorders')
+        tcPr.append(tcBorders)
+
+    # 默认样式 (0.5磅黑色实线)
+    default_border = {"sz": "4", "val": "single", "color": "auto", "space": "0"}
+
+    # 遍历上下左右四个边
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        edge_data = kwargs.get(edge)
+        
+        # 如果调用时没传具体参数，就使用默认样式
+        if edge_data is None and not kwargs:
+            edge_data = default_border
+        elif edge_data is None:
+            continue # 如果传了参数但没传这个边的，就跳过（保持原样）
+
+        # 查找并删除旧的边框设置
+        tag = 'w:{}'.format(edge)
+        element = tcBorders.find(qn(tag))
+        if element is not None:
+            tcBorders.remove(element)
+
+        # 创建新的边框
+        new_element = OxmlElement(tag)
+        for key in ["sz", "val", "color", "space", "shadow"]:
+            if key in edge_data:
+                new_element.set(qn('w:{}'.format(key)), str(edge_data[key]))
+            elif key in default_border: # 补全默认值
+                new_element.set(qn('w:{}'.format(key)), str(default_border[key]))
+                
+        tcBorders.append(new_element)
+
+
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
+def set_table_borders(table):
+    """
+    【核弹级】强制给整个表格加上边框（包括内部和外部）
+    这比给每个单元格加边框更稳定，不会因为合并单元格而断线。
+    """
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    
+    # 确保 tblPr 存在
+    if tblPr is None:
+        tblPr = OxmlElement('w:tblPr')
+        tbl.insert(0, tblPr)
+    
+    # 查找或创建 tblBorders 节点
+    tblBorders = tblPr.find(qn('w:tblBorders'))
+    if tblBorders is None:
+        tblBorders = OxmlElement('w:tblBorders')
+        tblPr.append(tblBorders)
+    
+    # 定义我们要设置的6条边：上下左右 + 内部横线 + 内部竖线
+    borders = {
+        'top': {"val": "single", "sz": "4", "color": "auto"},
+        'bottom': {"val": "single", "sz": "4", "color": "auto"},
+        'left': {"val": "single", "sz": "4", "color": "auto"},
+        'right': {"val": "single", "sz": "4", "color": "auto"},
+        'insideH': {"val": "single", "sz": "4", "color": "auto"}, # 内部横线
+        'insideV': {"val": "single", "sz": "4", "color": "auto"}  # 内部竖线
+    }
+    
+    # 循环应用每一个边框设置
+    for border_name, attrs in borders.items():
+        # 先删除旧的设置（防止冲突）
+        existing = tblBorders.find(qn(f'w:{border_name}'))
+        if existing is not None:
+            tblBorders.remove(existing)
+            
+        # 创建新的 XML 节点
+        border = OxmlElement(f'w:{border_name}')
+        for key, value in attrs.items():
+            border.set(qn(f'w:{key}'), value)
+        tblBorders.append(border)
+
+def set_first_column_bold(table):
+    """
+    将表格的第一列所有文字设置为加粗
+    """
+    for row in table.rows:
+        # 获取每一行的第1个单元格 (索引为0)
+        cell = row.cells[0]
+        
+        # 遍历单元格里的所有段落和文字块，把它们变粗
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
 
 def export_relation_table(
     output_path: str,
@@ -778,23 +884,51 @@ def export_relation_table(
     method_rows = sum(1 if c <= 0 else c for c in link_counts)
     rows = 2 + method_rows + 1
     table = doc.add_table(rows=rows, cols=cols)
-    table.style = "Table Grid"
+    table.autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    # Header row
-    table.cell(0, 0).text = "考核环节"
-    table.cell(0, 1).text = "考核方式"
-    table.cell(0, 2).text = "课程目标分权重"
+    total_width = 14.64
+    col_width = total_width / cols
+    for c in range(cols):
+        for r in range(rows):
+            table.cell(r, c).width = Cm(col_width)
+
+    def _mark_header(row):
+        tr = row._tr
+        trPr = tr.get_or_add_trPr()
+        tbl_header = OxmlElement('w:tblHeader')
+        tbl_header.set(qn('w:val'), 'true')
+        trPr.append(tbl_header)
+
+    def _set_cell_text(cell, text, bold=False):
+        cell.text = ''
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(text)
+        run.font.name = '\u4eff\u5b8b'
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), '\u4eff\u5b8b')
+        run.font.size = Pt(12)
+        run.bold = bold
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    # Header row 1
+    _set_cell_text(table.cell(0, 0), '\u8003\u6838\u73af\u8282', bold=True)
+    _set_cell_text(table.cell(0, 1), '\u8003\u6838\u65b9\u5f0f', bold=True)
+    _set_cell_text(table.cell(0, 2), '\u8bfe\u7a0b\u76ee\u6807\u5206\u6743\u91cd', bold=True)
     table.cell(0, 2).merge(table.cell(0, 1 + objectives_count))
-    table.cell(0, 2 + objectives_count).text = "小计"
-    table.cell(0, 3 + objectives_count).text = "合计"
+    _set_cell_text(table.cell(0, 2 + objectives_count), '\u5c0f\u8ba1', bold=True)
+    _set_cell_text(table.cell(0, 3 + objectives_count), '\u5408\u8ba1', bold=True)
 
     # Header row 2
     for i in range(objectives_count):
-        table.cell(1, 2 + i).text = f"课程目标{i+1}"
+        _set_cell_text(table.cell(1, 2 + i), f"\u8bfe\u7a0b\u76ee\u6807{i+1}", bold=True)
 
     # Merge header vertical cells
     for col in [0, 1, 2 + objectives_count, 3 + objectives_count]:
         table.cell(0, col).merge(table.cell(1, col))
+
+    _mark_header(table.rows[0])
+    _mark_header(table.rows[1])
 
     # Fill rows
     data_row = 2
@@ -802,40 +936,45 @@ def export_relation_table(
     for link_idx, link_name in enumerate(link_names):
         rows_for_link = 1 if link_counts[link_idx] <= 0 else link_counts[link_idx]
         link_label = f"{link_name}\n{_format_percent(link_ratios[link_idx] * 100)}"
-        table.cell(data_row, 0).text = link_label
+        _set_cell_text(table.cell(data_row, 0), link_label, bold=False)
         if rows_for_link > 1:
             table.cell(data_row, 0).merge(table.cell(data_row + rows_for_link - 1, 0))
-            table.cell(data_row, 3 + objectives_count).merge(table.cell(data_row + rows_for_link - 1, 3 + objectives_count))
+            table.cell(data_row, 3 + objectives_count).merge(
+                table.cell(data_row + rows_for_link - 1, 3 + objectives_count)
+            )
         link_total = 0.0
         for _ in range(rows_for_link):
             row = data_row
             method = methods_data[method_idx]
-            table.cell(row, 1).text = method["method_name"] or " "
+            _set_cell_text(table.cell(row, 1), method["method_name"] or " ", bold=False)
             for obj_idx, value in enumerate(method["weights"]):
-                table.cell(row, 2 + obj_idx).text = _format_percent(value)
-            table.cell(row, 2 + objectives_count).text = _format_percent(method["subtotal"])
+                _set_cell_text(table.cell(row, 2 + obj_idx), _format_percent(value), bold=False)
+            _set_cell_text(table.cell(row, 2 + objectives_count), _format_percent(method["subtotal"]), bold=False)
             link_total += method["subtotal"]
             data_row += 1
             method_idx += 1
-        table.cell(data_row - rows_for_link, 3 + objectives_count).text = _format_percent(link_total)
+        _set_cell_text(
+            table.cell(data_row - rows_for_link, 3 + objectives_count),
+            _format_percent(link_total),
+            bold=False,
+        )
 
     # Total row
     total_row = rows - 1
-    table.cell(total_row, 0).text = "100%"
-    table.cell(total_row, 1).text = "课程目标总权重"
+    _set_cell_text(table.cell(total_row, 0), "100%", bold=True)
+    _set_cell_text(table.cell(total_row, 1), "\u8bfe\u7a0b\u76ee\u6807\u603b\u6743\u91cd", bold=True)
     for obj_idx, value in enumerate(obj_totals):
-        table.cell(total_row, 2 + obj_idx).text = _format_percent(value)
-    table.cell(total_row, 2 + objectives_count).text = _format_percent(total_sum)
-    table.cell(total_row, 3 + objectives_count).text = _format_percent(100.0)
+        _set_cell_text(table.cell(total_row, 2 + obj_idx), _format_percent(value), bold=False)
+    _set_cell_text(table.cell(total_row, 2 + objectives_count), _format_percent(total_sum), bold=False)
+    _set_cell_text(table.cell(total_row, 3 + objectives_count), _format_percent(100.0), bold=False)
 
-    # Style cells
-    for row in range(rows):
-        for col in range(cols):
-            cell = table.cell(row, col)
-            _set_paragraph_center(cell)
-
+    # === 【修改这里】 ===
+    # 不需要遍历单元格了，直接给表格下达“全局显示边框”的指令
+    set_table_borders(table)
+    # ==================
+    # 2. 【新增】把第一列加粗
+    set_first_column_bold(table)
     doc.save(output_path)
-
 
 def export_relation_json(
     output_path: str,
