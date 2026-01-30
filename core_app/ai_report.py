@@ -18,8 +18,30 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from pathlib import Path
 
 class AIReportMixin:
+        def _set_cell_border(self, cell, size=4, color='000000'):
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            tcBorders = tcPr.find(qn('w:tcBorders'))
+            if tcBorders is None:
+                tcBorders = OxmlElement('w:tcBorders')
+                tcPr.append(tcBorders)
+            for edge in ('top', 'left', 'bottom', 'right'):
+                elem = tcBorders.find(qn(f'w:{edge}'))
+                if elem is None:
+                    elem = OxmlElement(f'w:{edge}')
+                    tcBorders.append(elem)
+                if size:
+                    elem.set(qn('w:val'), 'single')
+                    elem.set(qn('w:sz'), str(size))
+                    elem.set(qn('w:space'), '0')
+                    elem.set(qn('w:color'), color)
+                else:
+                    elem.set(qn('w:val'), 'nil')
+
+
         def test_deepseek_api(self, api_key: str) -> str:
             """测试 DeepSeek API 连接"""
             url = "https://api.deepseek.com/v1/chat/completions"
@@ -196,139 +218,104 @@ class AIReportMixin:
                     self.status_label.setText("\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\u5931\u8d25")
                 raise ValueError(f"\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\u5931\u8d25: {str(e)}")
 
-        def generate_improvement_report(self, current_achievement: Dict[str, float], course_name: str, num_objectives: int, answers=None) -> None:
-            """Generate single-column improvement report."""
-            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(
-                output_dir,
-                f"{self._safe_filename(course_name)}\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd.xlsx",
-            )
+        def generate_improvement_report(self, answers: list[str] | None, output_dir: str | None = None) -> str:
+            base_dir = Path(output_dir) if output_dir else (Path(__file__).resolve().parent.parent / 'outputs')
+            base_dir.mkdir(parents=True, exist_ok=True)
 
-            num_objectives = max(1, int(num_objectives))
-            questions = []
-            for i in range(1, num_objectives + 1):
-                questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff081\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790")
-                questions.append(f"\u8bfe\u7a0b\u76ee\u6807{i}\uff082\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
+            course_name = getattr(self, 'course_name', '')
+            if not course_name and hasattr(self, 'course_name_input'):
+                try:
+                    course_name = self.course_name_input.text().strip()
+                except Exception:
+                    course_name = ''
+            course_name = course_name or '课程'
+            safe_name = re.sub(r'[\/:*?"<>|]', '_', course_name)
+            output_file = base_dir / f"6.课程目标达成情况分析、存在问题及改进措施表.docx"
 
-            if answers is None:
-                prev_data = self.previous_achievement_data or {}
-                current_data = current_achievement or {}
-                prev_total = prev_data.get("\u8bfe\u7a0b\u603b\u76ee\u6807", 0)
-                current_total = current_data.get("\u603b\u8fbe\u6210\u5ea6", 0)
+            # ???? xlsx ????????
+            old_xlsx = base_dir / f"{safe_name}课程分目标达成情况分析、存在问题及改进措施.xlsx"
+            if old_xlsx.exists():
+                old_xlsx.unlink(missing_ok=True)
 
-                context = f"\u8bfe\u7a0b\u7b80\u4ecb: {self.course_description}\n"
-                for i, req in enumerate(self.objective_requirements, 1):
-                    context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u8981\u6c42: {req}\n"
-                for i in range(1, num_objectives + 1):
-                    prev_score = prev_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
-                    current_score = current_data.get(f"\u8bfe\u7a0b\u76ee\u6807{i}", 0)
-                    context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_score}\n"
-                    context += f"\u8bfe\u7a0b\u76ee\u6807{i}\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_score}\n"
-                context += f"\u8bfe\u7a0b\u603b\u76ee\u6807\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6: {prev_total}\n"
-                context += f"\u8bfe\u7a0b\u603b\u76ee\u6807\u672c\u5b66\u5e74\u8fbe\u6210\u5ea6: {current_total}\n"
+            obj_count = len(self.objective_requirements or [])
+            total_questions = 1 + obj_count * 2
+            answers = answers or []
+            while len(answers) < total_questions:
+                answers.append('')
 
-                cache_file = os.path.join(output_dir, "api_cache.json")
-                cached_answers = {}
-                if os.path.exists(cache_file):
-                    try:
-                        with open(cache_file, "r", encoding="utf-8") as f:
-                            cached_answers = json.load(f)
-                    except Exception:
-                        cached_answers = {}
+            overall_answer = answers[0].strip() if answers else ''
 
-                answers = []
-                total_questions = len(questions)
-                for i, question in enumerate(questions):
-                    if self.status_label:
-                        self.status_label.setText(f"\u6b63\u5728\u5904\u7406\u7b2c {i + 1}/{total_questions} \u4e2a\u95ee\u9898...")
-                    prompt = f"{context}\n\u95ee\u9898: {question}"
-                    cache_key = f"{course_name}_{question}"
-                    if cache_key in cached_answers:
-                        answers.append(cached_answers[cache_key])
-                    else:
-                        answer = self.call_deepseek_api(prompt)
-                        cached_answers[cache_key] = answer
-                        answers.append(answer)
-                        try:
-                            with open(cache_file, "w", encoding="utf-8") as f:
-                                json.dump(cached_answers, f, indent=4, ensure_ascii=False)
-                        except Exception:
-                            pass
+            rows: list[tuple[str, str]] = []
+            rows.append(('六、课程目标达成情况分析、存在问题及改进措施', 'heading'))
+            rows.append(('（一）总体情况', 'heading'))
+            rows.append((overall_answer, 'answer'))
+            rows.append(('（二）课程分目标达成情况分析、存在问题及改进措施', 'heading'))
 
-            rows = []
-            overall_answer = ""
-            answer_idx = 0
-            if answers and len(answers) == (num_objectives * 2 + 1):
-                overall_answer = answers[0]
-                answer_idx = 1
-            rows.append("\uff08\u4e00\uff09\u603b\u4f53\u60c5\u51b5")
-            rows.append(overall_answer or "")
-            rows.append("\uff08\u4e8c\uff09\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd")
-            for i in range(1, num_objectives + 1):
-                rows.append(f"{i}.\u8bfe\u7a0b\u76ee\u6807{i}")
-                rows.append("\uff081\uff09\u8fbe\u6210\u60c5\u51b5\u5206\u6790\uff1a")
-                rows.append(answers[answer_idx] if answers else "")
-                answer_idx += 1
-                rows.append("\uff082\uff09\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd\uff1a")
-                rows.append(answers[answer_idx] if answers else "")
-                answer_idx += 1
+            idx = 1
+            for i in range(1, obj_count + 1):
+                rows.append((f"{i}. 课程目标{i}", 'fixed'))
+                rows.append(('（1）达成情况分析：', 'fixed'))
+                rows.append((answers[idx].strip() if idx < len(answers) else '', 'answer'))
+                idx += 1
+                rows.append(('（2）存在问题及改进措施：', 'fixed'))
+                rows.append((answers[idx].strip() if idx < len(answers) else '', 'answer'))
+                idx += 1
 
-            heading_texts = {
-                "\uff08\u4e00\uff09\u603b\u4f53\u60c5\u51b5",
-                "\uff08\u4e8c\uff09\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd",
-            }
-            heading_font = Font(name="\u4eff\u5b8b", size=16, bold=True)
-            body_font = Font(name="\u4eff\u5b8b", size=16, bold=False)
-            no_border = Border()
+            doc = Document()
+            table = doc.add_table(rows=len(rows), cols=2)
+            table.autofit = False
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-            try:
-                wb = openpyxl.Workbook()
-                ws = wb.active
-                ws.title = "\u8bfe\u7a0b\u5206\u76ee\u6807\u8fbe\u6210\u60c5\u51b5\u5206\u6790\u3001\u5b58\u5728\u95ee\u9898\u53ca\u6539\u8fdb\u63aa\u65bd"
-                ws.column_dimensions["A"].width = 8
-                ws.column_dimensions["B"].width = 67
-                ws.sheet_view.showGridLines = False
+            total_width_cm = 14.64
+            left_col_cm = 1.0
+            right_col_cm = total_width_cm - left_col_cm
+            table.columns[0].width = Cm(left_col_cm)
+            table.columns[1].width = Cm(right_col_cm)
 
-                for row_idx, text in enumerate(rows, start=1):
-                    cell = ws.cell(row=row_idx, column=2)
-                    if text in heading_texts:
-                        cell.value = text
-                        cell.font = heading_font
-                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-                    else:
-                        display_text = text if text else ""
-                        cell.value = display_text
-                        cell.font = body_font
-                        cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
-                    cell.border = no_border
-                wb.save(output_file)
-            except Exception as e:
-                print(f"Error writing to Excel: {str(e)}")
-                raise
+            fixed_size = Pt(15)  # ??
+            answer_size = Pt(14)  # ??
+
+            for r_idx, (text, kind) in enumerate(rows):
+                row = table.rows[r_idx]
+                row.cells[0].text = ''
+                p = row.cells[1].paragraphs[0]
+                p.text = ''
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                pf = p.paragraph_format
+                pf.first_line_indent = None
+                pf.space_before = Pt(0)
+                pf.space_after = Pt(0)
+
+                run = p.add_run(text)
+                run.font.name = '仿宋'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋')
+                if kind == 'answer':
+                    run.font.size = answer_size
+                    run.bold = False
+                elif kind == 'heading':
+                    run.font.size = fixed_size
+                    run.bold = True
+                else:
+                    run.font.size = fixed_size
+                    run.bold = False
+
+                row.cells[0].vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                row.cells[1].vertical_alignment = WD_ALIGN_VERTICAL.TOP
+
+            for row in table.rows:
+                for cell in row.cells:
+                    self._set_cell_border(cell, size=0)
+
+            doc.save(output_file)
+            return str(output_file)
 
         def store_api_key(self, api_key: str) -> None:
-            """\u5b58\u50a8 API Key\u3002"""
+            """存储 API Key"""
             self.api_key = api_key
-            if self.status_label:
-                self.status_label.setText("\u5df2\u5b58\u50a8API Key")
+            if hasattr(self, 'status_label') and self.status_label:
+                self.status_label.setText("已存储API Key")
 
-        def generate_ai_report(self, num_objectives: int, current_achievement: Dict[str, float]) -> None:
-            """\u751f\u6210AI\u5206\u6790\u62a5\u544a\u3002"""
-            if not self.api_key:
-                raise ValueError("\u8bf7\u5148\u8bbe\u7f6eAPI Key")
-
-            course_name = self.course_name_input.text()
-            if not course_name:
-                if self.status_label:
-                    self.status_label.setText("\u8bf7\u5148\u8f93\u5165\u8bfe\u7a0b\u540d\u79f0")
-                return
-
-            try:
-                self.generate_improvement_report(current_achievement, course_name, num_objectives)
-                if self.status_label:
-                    self.status_label.setText("AI\u5206\u6790\u62a5\u544a\u5df2\u751f\u6210")
-            except Exception as e:
-                if self.status_label:
-                    self.status_label.setText("\u751f\u6210AI\u5206\u6790\u62a5\u544a\u5931\u8d25")
-                raise ValueError(f"\u751f\u6210AI\u5206\u6790\u62a5\u544a\u5931\u8d25: {str(e)}")
+        def generate_ai_report(self, *args, **kwargs) -> None:
+            """适配旧接口调用的 generate_improvement_report 包装器"""
+            answers = kwargs.get('answers') if isinstance(kwargs, dict) else None
+            self.generate_improvement_report(answers=answers)

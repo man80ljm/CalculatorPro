@@ -267,9 +267,6 @@ class GenerateReportThread(QThread):
                 answers.append(answer)
 
             self.processor.generate_improvement_report(
-                self.current_achievement,
-                course_name,
-                self.num_objectives,
                 answers=answers,
             )
             self.progress_value.emit(total_questions)

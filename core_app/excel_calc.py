@@ -168,7 +168,8 @@ class ExcelCalcMixin:
             if not course_name:
                 raise ValueError("请输入课程名称")
                 
-            output_dir = os.path.dirname(self.input_file)
+            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', 'outputs')
+            os.makedirs(output_dir, exist_ok=True)
             detail_output = os.path.join(output_dir, f'{course_name}成绩单详情.xlsx')
 
             try:
@@ -303,7 +304,8 @@ class ExcelCalcMixin:
 
         def generate_objective_analysis_report(self, result_df: pd.DataFrame, course_name: str, weights, usual_ratio, midterm_ratio, final_ratio) -> float:
             """生成课程目标达成度分析报告"""
-            output_dir = os.path.dirname(self.input_file)
+            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', 'outputs')
+            os.makedirs(output_dir, exist_ok=True)
             analysis_output = os.path.join(output_dir, f'{course_name}课程目标达成度分析表.xlsx')
             
             objectives = sorted([i for i in result_df['课程目标'].unique() if isinstance(i, int)])
@@ -852,7 +854,7 @@ class ExcelCalcMixin:
             eval_ws.column_dimensions["F"].width = 12
             eval_ws.column_dimensions["G"].width = 16
 
-            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
+            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "outputs")
             os.makedirs(output_dir, exist_ok=True)
             safe_name = self._safe_filename(self.course_name_input.text())
             detail_output_path = os.path.join(output_dir, f"{safe_name}\u6210\u7ee9\u660e\u7ec6.xlsx")
@@ -1039,7 +1041,7 @@ class ExcelCalcMixin:
             stats_ws.row_dimensions[3].height = 36
 
 
-            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
+            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "outputs")
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, f"{self._safe_filename(self.course_name_input.text())}\u6210\u7ee9\u660e\u7ec6.xlsx")
             wb.save(output_path)
