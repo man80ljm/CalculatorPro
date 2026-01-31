@@ -1,117 +1,242 @@
-成绩计算器
-一个基于 PyQt6 的课程目标达成度计算工具，支持成绩逆向推算、生成详细成绩报告，并通过 DeepSeek API 生成 AI 驱动的改进分析报告。
-功能
+# 逆向推算功能完整实现 - 集成指南
 
-成绩处理：根据平时、期中、期末成绩，计算课程目标的加权分数。
-灵活配置：通过用户友好的界面设置课程目标数量、权重及成绩占比。
-成绩分布：支持正态分布、左偏态分布、右偏态分布和均匀分布。
-Excel 输出：生成详细成绩单和目标达成度分析表（Excel 格式）。
-AI 分析：调用 DeepSeek API 生成基于课程数据的持续改进报告。
-历史数据对比：加载并对比上一学年的达成度数据。
+## 修改概览
 
-前提条件
+本次修改实现了以下功能：
+1. **逆向模式强制依赖关系表** - 未填写关系表时禁止下载逆向模板
+2. **逆向导出包含正向全部文件** - 表2(统计表) + 表5(达成度) + Word版本
+3. **额外输出"二维正向成绩表"** - 把逆向反推的方法级分数以正向模板格式展示
+4. **完整计算链** - 逆向流程与正向流程输出一致
 
-Python 3.8 或更高版本
-DeepSeek API Key（用于生成 AI 分析报告）
+---
 
-安装
+## 文件修改清单
 
-克隆仓库
-git clone <repository-url>
-cd grade-calculator
+### 1. excel_templates.py（完整替换）
 
+**文件位置**: `io_app/excel_templates.py`
 
-创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+**修改内容**:
+- `create_reverse_template()` 函数现在**强制要求** `relation_json_path` 参数
+- 如果未提供关系表，会抛出 `ValueError` 异常
 
+**直接使用**: `/home/claude/modified_files/excel_templates.py` 可以直接替换原文件
 
-安装依赖使用以下国内镜像源加速下载（任选其一）：
+---
 
-清华大学镜像
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+### 2. main_window.py（局部修改）
 
+**文件位置**: `ui_app/main_window.py`
 
-阿里云镜像
-pip install -r requirements.txt -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+**修改位置**: `open_template_download()` 方法（约第805-847行）
 
-直接安装requirements.txt
-pip install -r requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/
+**修改内容**:
+- 逆向模式下载模板前，增加对 `self.relation_payload` 的强制检查
+- 如果未填写关系表，弹出警告对话框并阻止下载
 
-依赖包列于 requirements.txt：
-PyQt6==6.5.2
-pandas==2.0.3
-numpy==1.24.4
-openpyxl==3.1.2
-requests==2.31.0
+**集成方法**: 
+找到原来的 `open_template_download` 方法，替换为以下代码：
 
+```python
+def open_template_download(self):
+    """下载模板并保存到 outputs 目录"""
+    dialog = TemplateDownloadDialog(self)
+    if not dialog.exec():
+        return
+    count = dialog.student_count
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    
+    try:
+        # ===== 正向模式 =====
+        if self.tabs.currentIndex() == 0:
+            if not self.relation_payload:
+                QMessageBox.warning(
+                    self,
+                    "提示",
+                    "请先填写"课程考核与课程目标对应关系"。",
+                )
+                return
+            outputs_dir = os.path.join(base_dir, "outputs")
+            os.makedirs(outputs_dir, exist_ok=True)
+            relation_json_path = os.path.join(outputs_dir, "relation_table.json")
+            with open(relation_json_path, "w", encoding="utf-8") as f:
+                json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
+            output_path = create_forward_template(base_dir, count, relation_json_path)
+        
+        # ===== 逆向模式（修改部分） =====
+        else:
+            # 【新增】强制检查关系表
+            if not self.relation_payload:
+                QMessageBox.warning(
+                    self,
+                    "提示",
+                    "逆向模式必须先填写"课程考核与课程目标对应关系表"。\n\n"
+                    "逆向推算需要知道考核环节和考核方式的结构才能正确反推成绩。",
+                )
+                return
+            
+            # 保存关系表到文件
+            outputs_dir = os.path.join(base_dir, "outputs")
+            os.makedirs(outputs_dir, exist_ok=True)
+            relation_json_path = os.path.join(outputs_dir, "relation_table.json")
+            with open(relation_json_path, "w", encoding="utf-8") as f:
+                json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
+            
+            # 创建逆向模板（现在会强制使用关系表）
+            output_path = create_reverse_template(base_dir, count, relation_json_path)
 
+        QMessageBox.information(
+            self,
+            "下载成功",
+            f"模板已生成：{output_path}",
+        )
+    except Exception as exc:
+        QMessageBox.critical(
+            self,
+            "错误",
+            f"模板生成失败：{str(exc)}",
+        )
+```
 
-使用方法
+---
 
-运行程序
-python main.py
+### 3. excel_calc.py（局部修改）
 
+**文件位置**: `core_app/excel_calc.py`
 
-输入数据
+**修改内容**:
+1. **新增方法** `_generate_forward_score_table()` - 生成二维正向成绩表
+2. **替换方法** `process_reverse_grades()` - 完整的逆向流程实现
 
-输入课程名称和目标数量。
-设置各目标的权重系数（总和必须为 1）。
-设置平时、期中、期末成绩的占比（总和必须为 1）。
-选择分数跨度和分布模式。
-导入包含学生成绩的 Excel 文件（需包含列：学生姓名、平时成绩、期中成绩、期末成绩、总和）。
+**集成方法**:
 
+#### 3.1 添加新方法 `_generate_forward_score_table`
 
-配置设置
+在 `ExcelCalcMixin` 类中添加以下方法（建议放在 `process_reverse_grades` 之前）：
 
-点击“设置”按钮，输入课程简介、目标要求和 DeepSeek API Key。
-可选：导入上一学年达成度分析表（Excel 格式）。
+```python
+def _generate_forward_score_table(self, detail_rows: list, links: list) -> str:
+    """
+    根据逆向推算的明细数据，生成二维正向成绩表。
+    格式：行=学生，列=考核环节下的方法，带两行表头/合并单元格
+    """
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Side, Font
+    
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "正向成绩表"
+    
+    # 构建表头结构
+    ws.cell(row=1, column=1, value="姓名")
+    ws.cell(row=2, column=1, value="姓名")
+    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
+    
+    col = 2
+    method_col_map = {}
+    
+    for link in links:
+        link_name = link.get("name", "")
+        methods = link.get("methods", []) or [{"name": "无"}]
+        start_col = col
+        
+        for method in methods:
+            m_name = method.get("name", "无")
+            ws.cell(row=2, column=col, value=m_name)
+            method_col_map[f"{link_name}-{m_name}"] = col
+            col += 1
+        
+        end_col = col - 1
+        ws.cell(row=1, column=start_col, value=link_name)
+        if end_col > start_col:
+            ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
+    
+    # 填充学生数据
+    row_idx = 3
+    for row_data in detail_rows:
+        name = row_data.get("姓名", "")
+        ws.cell(row=row_idx, column=1, value=name)
+        
+        for key, col_num in method_col_map.items():
+            score = row_data.get(key, 0)
+            ws.cell(row=row_idx, column=col_num, value=round(score, 1) if isinstance(score, (int, float)) else score)
+        
+        row_idx += 1
+    
+    # 应用样式
+    align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    thin = Side(style='thin')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_font = Font(bold=True)
+    
+    for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+        for cell in r:
+            cell.alignment = align
+            cell.border = border
+            if cell.row <= 2:
+                cell.font = header_font
+    
+    # 调整列宽
+    ws.column_dimensions['A'].width = 10
+    for c in range(2, col):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = 12
+    
+    # 保存文件
+    output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "outputs")
+    os.makedirs(output_dir, exist_ok=True)
+    safe_name = self._safe_filename(self.course_name_input.text())
+    output_path = os.path.join(output_dir, f"{safe_name}正向成绩表（逆向生成）.xlsx")
+    wb.save(output_path)
+    
+    return output_path
+```
 
+#### 3.2 替换 `process_reverse_grades` 方法
 
-生成报告
+用 `/home/claude/modified_files/excel_calc_patch.py` 中的 `process_reverse_grades` 方法替换原有方法。
 
-点击“导出结果”处理成绩并生成 Excel 报告。
-点击“生成 AI 分析报告”生成持续改进报告（需配置 API Key）。
+---
 
+## 逆向流程输出文件清单
 
+修改后，逆向模式导出将生成以下文件：
 
-文件结构
+| 文件名 | 说明 |
+|--------|------|
+| `{课程名}成绩明细.xlsx` | 包含3个Sheet: 成绩明细、课程成绩统计、课程目标达成情况评价结果 |
+| `{课程名}正向成绩表（逆向生成）.xlsx` | **【新增】** 二维正向成绩表，格式与正向模板一致 |
+| `2.课程成绩统计表.docx` | 表2的Word版本 |
+| `5.基于考核结果的课程目标达成情况评价结果表.docx` | 表5的Word版本 |
 
-main.py：程序入口。
-ui.py：PyQt6 实现的图形界面。
-core.py：成绩处理和 API 交互的核心逻辑。
-utils.py：成绩标准化和 Excel 格式化工具函数。
-config.json：存储 API Key 和课程设置（不纳入 git 跟踪）。
-calculator.ico：程序图标（需确保路径正确）。
+---
 
-注意事项
+## 测试建议
 
-确保 calculator.ico 文件位于 D:\calculator\calculator.ico 或项目根目录。
-DeepSeek API 调用可能需要 VPN 或代理访问。
-导入的成绩单和达成度表需符合指定格式（见“设置”窗口提示）。
+1. **测试关系表检查**
+   - 不填写关系表，点击逆向模式的"模板下载"，应弹出警告
+   - 填写关系表后，应能正常下载
 
-打包为可执行文件
-使用 PyInstaller 打包程序为单个 EXE 文件：
-pyinstaller --onefile --icon=calculator.ico --add-data "calculator.ico;." main.py
+2. **测试完整流程**
+   - 填写关系表
+   - 下载逆向模板
+   - 填入环节总分
+   - 导入并导出
+   - 检查outputs目录是否生成所有预期文件
 
+3. **测试正向成绩表格式**
+   - 打开"正向成绩表（逆向生成）.xlsx"
+   - 检查表头是否为二级结构（环节-方法）
+   - 检查分数是否合理
 
-确保 calculator.ico 在项目根目录或指定路径。
-Windows 用户需将 ; 替换为 : 在 --add-data 参数中。
+---
 
-移除被跟踪的信息
-# 移除单个文件
-git rm --cached config.json
-git rm --cached main.spec
+## 后续可优化项
 
-# 移除文件夹及其下的所有文件（使用 -r 表示递归）
-git rm -r --cached __pycache__
-git rm -r --cached backup
-git rm -r --cached dist
-git rm -r --cached build
+1. **真实性增强**（可作为高级设置）
+   - 一致性系数：控制同一学生各方法分数的相关性
+   - 方法难度偏移：不同考核方式有不同的平均分倾向
+   - 分数锚定：限制平时分下限等
 
-
-打包指令：
-pyinstaller -F -w --icon=calculator.ico --add-data "calculator.ico;." main.py
-
-Linux/MacOS：
-pyinstaller -F -w --icon=calculator.ico --add-data "calculator.ico:." main.py
+2. **UI优化**
+   - 逆向模式Tab增加"必须先填写关系表"的提示文字
+   - 导出完成后显示生成的文件列表

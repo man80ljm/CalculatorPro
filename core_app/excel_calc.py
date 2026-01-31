@@ -869,22 +869,37 @@ class ExcelCalcMixin:
             return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
 
         def process_reverse_grades(self, spread_mode='medium', distribution='uniform'):
-            """\u9006\u5411\u6210\u7ee9\u5bfc\u5165\u4e0e\u751f\u6210\u660e\u7ec6"""
-            df = pd.read_excel(self.input_file)
-            df = df.fillna(0)
-            self._validate_reverse_headers(df)
+            """
+            逆向成绩导入与生成明细
+            
+            流程：
+            1. 读取逆向模板（环节总分）
+            2. 逆向推算出方法级分数
+            3. 用方法级分数生成与正向一致的成绩明细表
+            4. 生成表2（课程成绩统计）+ Word版
+            5. 生成表5（课程目标达成情况评价结果）+ Word版
+            """
+            # ===== 第一步：读取和验证输入 =====
+            df_input = pd.read_excel(self.input_file)
+            df_input = df_input.fillna(0)
+            self._validate_reverse_headers(df_input)
 
             links = self._get_links()
             if not links:
-                links = [
-                    {"name": "\u5e73\u65f6\u8003\u6838", "ratio": 0.0, "methods": []},
-                    {"name": "\u671f\u4e2d\u8003\u6838", "ratio": 0.0, "methods": []},
-                    {"name": "\u671f\u672b\u8003\u6838", "ratio": 0.0, "methods": []},
-                ]
+                raise ValueError("逆向模式必须先填写[课程考核与课程目标对应关系表]")
 
-            detail_rows = []
-            total_scores = []
+            # 获取课程目标信息
+            obj_count = int(self.relation_payload.get("objectives_count", 0) or 0)
+            if obj_count <= 0:
+                obj_keys_set = set()
+                for link in links:
+                    for method in link.get("methods", []):
+                        obj_keys_set.update(method.get("supports", {}).keys())
+                obj_count = len(obj_keys_set)
+            obj_keys = [f"课程目标{i+1}" for i in range(obj_count)]
+            obj_headers = [f"目标{i+1}" for i in range(obj_count)]
 
+            # ===== 第二步：逆向推算方法级分数 =====
             dist_map = {
                 "normal": "normal",
                 "left_skewed": "left_skewed",
@@ -895,30 +910,34 @@ class ExcelCalcMixin:
             }
             dist_type = dist_map.get(distribution, "normal")
 
-            for _, row in df.iterrows():
-                name = row.get("\u59d3\u540d")
+            # 存储每个学生的方法级分数，用于后续生成明细表
+            students_method_scores = []  # [{name, method_scores: {method_name: score}}]
+
+            for _, row in df_input.iterrows():
+                name = row.get("姓名")
                 if pd.isna(name) or str(name).strip() == "":
                     continue
-                row_dict = {"\u59d3\u540d": name}
-                total_score = 0.0
+                
+                student_data = {"name": name, "method_scores": {}}
 
                 for link in links:
                     link_name = link.get("name", "")
-                    link_ratio = float(link.get("ratio", 0))
                     link_score = row.get(link_name, 0)
                     try:
                         link_score = float(link_score)
                     except Exception:
                         link_score = 0.0
 
-                    methods = link.get("methods", []) or [{"name": "\u65e0", "subtotal": 1.0}]
+                    methods = link.get("methods", []) or [{"name": "无", "subtotal": 1.0}]
                     weights = [float(m.get("subtotal", 0)) for m in methods]
                     weights = self._normalize_weights(weights)
 
+                    # 构建分布结构
                     structure = {}
                     for m, w in zip(methods, weights):
-                        structure[m.get("name", "\u65e0")] = {"weight": w, "type": dist_type}
+                        structure[m.get("name", "无")] = {"weight": w, "type": dist_type}
 
+                    # 逆向推算
                     if structure and sum(weights) > 0:
                         breakdown = self.reverse_engine.generate_breakdown(
                             link_score,
@@ -926,31 +945,119 @@ class ExcelCalcMixin:
                             noise_config=self.noise_config,
                         )
                     else:
-                        breakdown = {m.get("name", "\u65e0"): 0 for m in methods}
+                        breakdown = {m.get("name", "无"): 0 for m in methods}
 
+                    # 记录方法级分数
                     for m in methods:
-                        m_name = m.get("name", "\u65e0")
-                        row_dict[f"{link_name}-{m_name}"] = breakdown.get(m_name, 0)
+                        m_name = m.get("name", "无")
+                        student_data["method_scores"][m_name] = breakdown.get(m_name, 0)
 
-                    row_dict[link_name] = round(link_score, 2)
-                    total_score += link_score * link_ratio
+                students_method_scores.append(student_data)
 
-                row_dict["\u603b\u8bc4"] = round(total_score, 2)
-                total_scores.append(total_score)
-                detail_rows.append(row_dict)
-
-            
-            
-
-            
-            detail_df = pd.DataFrame(detail_rows)
-
+            # ===== 第三步：生成与正向一致的成绩明细表 =====
             wb = openpyxl.Workbook()
             ws = wb.active
-            ws.title = "\u6210\u7ee9\u660e\u7ec6"
-            for r in dataframe_to_rows(detail_df, index=False, header=True):
-                ws.append(r)
+            ws.title = "成绩明细"
 
+            header = ["姓名", "考核环节", "考核方式"] + obj_headers + ["小计", "合计", "等级"]
+            ws.append(header)
+
+            def format_link_label(name, ratio):
+                pct = int(round(ratio * 100))
+                if "考核" in name:
+                    base = name.replace("考核", "")
+                    return f"{base}\n考核\n({pct}%)"
+                return f"{name}\n({pct}%)"
+
+            def grade_label(score):
+                if score >= 90:
+                    return "优秀"
+                if score >= 80:
+                    return "良好"
+                if score >= 70:
+                    return "中等"
+                if score >= 60:
+                    return "及格"
+                return "不及格"
+
+            row_cursor = 2
+            total_scores = []
+            method_scores_all = {}  # 用于计算各方法的平均分
+
+            for student in students_method_scores:
+                name = student["name"]
+                method_scores = student["method_scores"]
+                
+                student_start = row_cursor
+                total_score = 0.0
+                total_obj_scores = [0.0 for _ in range(obj_count)]
+
+                for link in links:
+                    link_name = link.get("name", "")
+                    link_ratio = float(link.get("ratio", 0))
+                    methods = link.get("methods", []) or [{"name": "无", "supports": {}, "subtotal": 1.0}]
+
+                    link_label = format_link_label(link_name, link_ratio)
+                    link_start = row_cursor
+                    link_obj_scores = [0.0 for _ in range(obj_count)]
+                    link_score = 0.0
+
+                    for idx, m in enumerate(methods):
+                        m_name = m.get("name", "无")
+                        score = method_scores.get(m_name, 0)
+                        
+                        # 累积用于计算平均分
+                        if m_name not in method_scores_all:
+                            method_scores_all[m_name] = []
+                        method_scores_all[m_name].append(score)
+
+                        supports = m.get("supports", {}) or {}
+                        support_vals = [float(supports.get(k, 0)) for k in obj_keys]
+                        obj_scores = [score * v for v in support_vals]
+
+                        for i, v in enumerate(obj_scores):
+                            link_obj_scores[i] += v
+
+                        method_weight = float(m.get("subtotal", 0))
+                        link_score += score * method_weight
+
+                        method_subtotal = sum(obj_scores)
+                        row_values = ["", link_label if row_cursor == link_start else "", m_name]
+                        row_values += [round(v, 2) for v in obj_scores]
+                        row_values += [round(method_subtotal, 2), "", ""]
+                        ws.append(row_values)
+                        row_cursor += 1
+
+                    # 环节合计行
+                    total_row = ["", link_label if row_cursor == link_start else "", "环节合计"]
+                    total_row += [round(v, 2) for v in link_obj_scores]
+                    total_row += ["", round(link_score, 2), ""]
+                    ws.append(total_row)
+                    row_cursor += 1
+
+                    ws.merge_cells(start_row=link_start, start_column=2, end_row=row_cursor - 1, end_column=2)
+
+                    total_score += link_score * link_ratio
+                    for i, v in enumerate(link_obj_scores):
+                        total_obj_scores[i] += v * link_ratio
+
+                grade = grade_label(total_score)
+                final_row = ["", "100%", "课程总评"]
+                final_row += [round(v, 2) for v in total_obj_scores]
+                final_row += ["", round(total_score, 2), grade]
+                ws.append(final_row)
+                row_cursor += 1
+
+                # 填充姓名和等级（合并单元格）
+                ws.cell(row=student_start, column=1, value=name)
+                grade_col = len(header)
+                ws.cell(row=student_start, column=grade_col, value=grade)
+
+                ws.merge_cells(start_row=student_start, start_column=1, end_row=row_cursor - 1, end_column=1)
+                ws.merge_cells(start_row=student_start, start_column=grade_col, end_row=row_cursor - 1, end_column=grade_col)
+                total_scores.append(total_score)
+
+            # 应用样式
             align = Alignment(horizontal='center', vertical='center', wrap_text=True)
             thin = Side(style='thin')
             border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -959,18 +1066,22 @@ class ExcelCalcMixin:
                     cell.alignment = align
                     cell.border = border
 
-            stats_ws = wb.create_sheet(title="\u8bfe\u7a0b\u6210\u7ee9\u7edf\u8ba1")
+            # 计算各方法平均分
+            method_avgs = {m_name: float(np.mean(scores)) for m_name, scores in method_scores_all.items()}
+
+            # ===== 第四步：生成表2（课程成绩统计） =====
+            stats_ws = wb.create_sheet(title="课程成绩统计")
             total_count = len(total_scores)
             max_score = round(max(total_scores), 2) if total_scores else 0
             min_score = round(min(total_scores), 2) if total_scores else 0
             avg_score = round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
 
             grade_bins = [
-                (90, 100, "\u4f18\u79c0"),
-                (80, 89.999, "\u826f\u597d"),
-                (70, 79.999, "\u4e2d\u7b49"),
-                (60, 69.999, "\u53ca\u683c"),
-                (0, 59.999, "\u4e0d\u53ca\u683c"),
+                (90, 100, "优秀"),
+                (80, 89.999, "良好"),
+                (70, 79.999, "中等"),
+                (60, 69.999, "及格"),
+                (0, 59.999, "不及格"),
             ]
             counts = []
             ratios = []
@@ -994,26 +1105,29 @@ class ExcelCalcMixin:
                 name = link.get("name", "")
                 ratio = link.get("ratio", 0)
                 if name:
-                    composition_parts.append(f"{name}\uff08{_fmt_ratio(ratio)}\uff09")
+                    composition_parts.append(f"{name}（{_fmt_ratio(ratio)}）")
             composition_text = " + ".join(composition_parts)
 
-            stats_ws.append(["\u6210\u7ee9\u6784\u6210", composition_text, "", "", "", ""])
+            stats_ws.append(["成绩构成", composition_text, "", "", "", ""])
             stats_ws.merge_cells("B1:F1")
-            stats_ws.append(["\u6700\u9ad8\u6210\u7ee9", max_score, "\u6700\u4f4e\u6210\u7ee9", min_score, "\u5e73\u5747\u6210\u7ee9", avg_score])
+            stats_ws.append(["最高成绩", max_score, "最低成绩", min_score, "平均成绩", avg_score])
             stats_ws.append([
-                "\u6210\u7ee9\u7b49\u7ea7",
-                "90-100\n(\u4f18\u79c0)",
-                "80-89\n(\u826f\u597d)",
-                "70-79\n(\u4e2d\u7b49)",
-                "60-69\n(\u53ca\u683c)",
-                "<60\n(\u4e0d\u53ca\u683c)",
+                "成绩等级",
+                "90-100\n(优秀)",
+                "80-89\n(良好)",
+                "70-79\n(中等)",
+                "60-69\n(及格)",
+                "<60\n(不及格)",
             ])
-            stats_ws.append(["\u4eba\u6570"] + counts)
+            stats_ws.append(["人数"] + counts)
+            stats_ws.append(["占考核人数的比例"] + [f"{r*100:.2f}%" for r in ratios])
+
+            # 导出表2的Word版本
             self._export_stats_docx(composition_text, max_score, min_score, avg_score, counts, ratios)
 
-            # ??????????????/????????
-            base_font = Font(name="\u4eff\u5b8b", size=12)
-            bold_font = Font(name="\u4eff\u5b8b", size=12, bold=True)
+            # 统计表样式
+            base_font = Font(name="仿宋", size=12)
+            bold_font = Font(name="仿宋", size=12, bold=True)
             fixed_cells = {
                 "A1", "A2", "C2", "E2", "A3", "A4", "A5",
                 "B3", "C3", "D3", "E3", "F3",
@@ -1022,11 +1136,10 @@ class ExcelCalcMixin:
                 for cell in r:
                     cell.font = bold_font if cell.coordinate in fixed_cells else base_font
 
-            # ?????? 14.64cm?A ? 3.75cm?????
             total_cm = 14.64
             first_cm = 3.75
             other_cm = (total_cm - first_cm) / 5
-            cm_to_width = 4.0  # ????
+            cm_to_width = 4.0
             stats_ws.column_dimensions["A"].width = round(first_cm * cm_to_width, 2)
             for col in ["B", "C", "D", "E", "F"]:
                 stats_ws.column_dimensions[col].width = round(other_cm * cm_to_width, 2)
@@ -1037,13 +1150,154 @@ class ExcelCalcMixin:
                 for cell in r:
                     cell.alignment = stat_align
                     cell.border = stat_border
-
             stats_ws.row_dimensions[3].height = 36
 
+            # ===== 第五步：生成表5（课程目标达成情况评价结果） =====
+            eval_ws = wb.create_sheet(title="课程目标达成情况评价结果")
+            eval_headers = [
+                "课程分目标",
+                "考核环节",
+                "分权重",
+                "分值/满分",
+                "学生实际得分平均分",
+                "分目标达成值",
+                "上一轮教学分目标达成值",
+            ]
+            eval_ws.append(eval_headers)
 
+            prev_data = self.previous_achievement_data or {}
+            current_achievement = {}
+            total_obj_weight = 0.0
+            total_obj_actual = 0.0
+
+            eval_row_cursor = 2
+            for idx, obj_key in enumerate(obj_keys):
+                obj_name = f"课程目标{idx + 1}"
+                obj_start = eval_row_cursor
+                obj_weight_sum = 0.0
+                obj_actual_sum = 0.0
+
+                for link in links:
+                    link_name = link.get("name", "")
+                    if "平时" in link_name:
+                        display_link = "平时成绩"
+                    elif "期中" in link_name:
+                        display_link = "期中考核"
+                    elif "期末" in link_name:
+                        display_link = "期末考核"
+                    else:
+                        display_link = link_name
+
+                    link_ratio = float(link.get("ratio", 0))
+                    methods = link.get("methods", []) or []
+
+                    support_sum = 0.0
+                    actual_sum = 0.0
+                    for m in methods:
+                        supports = m.get("supports", {}) or {}
+                        weight = float(supports.get(obj_key, 0))
+                        support_sum += weight
+                        m_name = m.get("name")
+                        m_avg = float(method_avgs.get(m_name, 0))
+                        actual_sum += m_avg * weight
+
+                    target_weight = link_ratio * 100.0 * support_sum
+                    actual_score = link_ratio * actual_sum
+
+                    obj_weight_sum += target_weight
+                    obj_actual_sum += actual_score
+
+                    eval_ws.append([
+                        obj_name if eval_row_cursor == obj_start else "",
+                        display_link,
+                        round(target_weight, 2),
+                        100,
+                        round(actual_score, 2),
+                        "",
+                        "",
+                    ])
+                    eval_row_cursor += 1
+
+                achievement = round(obj_actual_sum / obj_weight_sum, 3) if obj_weight_sum > 0 else 0
+                current_achievement[obj_name] = achievement
+                prev_val = prev_data.get(obj_name, 0) if prev_data else 0
+                prev_val = 0 if prev_val is None else prev_val
+
+                eval_ws.cell(row=obj_start, column=6, value=achievement)
+                eval_ws.cell(row=obj_start, column=7, value=prev_val)
+
+                if eval_row_cursor - 1 > obj_start:
+                    eval_ws.merge_cells(start_row=obj_start, start_column=1, end_row=eval_row_cursor - 1, end_column=1)
+                    eval_ws.merge_cells(start_row=obj_start, start_column=6, end_row=eval_row_cursor - 1, end_column=6)
+                    eval_ws.merge_cells(start_row=obj_start, start_column=7, end_row=eval_row_cursor - 1, end_column=7)
+
+                total_obj_weight += obj_weight_sum
+                total_obj_actual += obj_actual_sum
+
+            # 计算总达成度
+            total_attainment = round(total_obj_actual / total_obj_weight, 3) if total_obj_weight > 0 else 0
+            current_achievement["总达成度"] = total_attainment
+            self.current_achievement = current_achievement
+            
+            # 计算期望值
+            expected_attainment = 0.7
+            prev_total = 0
+            for key in ["课程目标达成值", "课程总目标", "课程总达成值", "total_value"]:
+                if key in prev_data:
+                    prev_total = prev_data.get(key, 0) or 0
+                    break
+            if prev_total and total_attainment:
+                low = min(prev_total, total_attainment)
+                high = max(prev_total, total_attainment)
+                expected_attainment = round(random.uniform(low, high), 3)
+            else:
+                expected_attainment = total_attainment
+
+            def _append_summary(label, value=None, prev=None):
+                display_val = value if value is not None else (prev if prev is not None else 0)
+                eval_ws.append([label, "", "", "", "", display_val, ""])
+                row_idx = eval_ws.max_row
+                eval_ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
+                eval_ws.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=7)
+
+            _append_summary("课程目标达成值", total_attainment)
+            _append_summary("课程目标达成期望值", expected_attainment)
+            _append_summary("上一轮教学课程目标达成值", None, prev_total)
+
+            # 表5样式
+            eval_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            eval_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            for r in eval_ws.iter_rows(min_row=1, max_row=eval_ws.max_row, min_col=1, max_col=eval_ws.max_column):
+                for cell in r:
+                    cell.alignment = eval_align
+                    cell.border = eval_border
+
+            eval_ws.column_dimensions["A"].width = 14
+            eval_ws.column_dimensions["B"].width = 12
+            eval_ws.column_dimensions["C"].width = 10
+            eval_ws.column_dimensions["D"].width = 12
+            eval_ws.column_dimensions["E"].width = 18
+            eval_ws.column_dimensions["F"].width = 12
+            eval_ws.column_dimensions["G"].width = 16
+
+            # ===== 第六步：保存所有文件 =====
             output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "outputs")
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"{self._safe_filename(self.course_name_input.text())}\u6210\u7ee9\u660e\u7ec6.xlsx")
+            safe_name = self._safe_filename(self.course_name_input.text())
+            
+            # 保存主Excel（包含成绩明细、统计表、达成度评价结果）
+            # 文件名加"（逆向）"后缀
+            output_path = os.path.join(output_dir, f"{safe_name}成绩明细（逆向）.xlsx")
             wb.save(output_path)
 
+            # 导出表5的Word版本
+            try:
+                self._export_eval_result_docx(
+                    links, obj_keys, method_avgs, prev_data,
+                    total_attainment, expected_attainment, prev_total
+                )
+            except Exception as e:
+                print(f"导出表5 Word失败: {e}")
+
             return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
+

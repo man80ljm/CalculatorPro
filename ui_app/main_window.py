@@ -809,13 +809,15 @@ class GradeAnalysisApp(QMainWindow):
             return
         count = dialog.student_count
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        
         try:
+            # ===== 正向模式 =====
             if self.tabs.currentIndex() == 0:
                 if not self.relation_payload:
                     QMessageBox.warning(
                         self,
-                        "提示",
-                        "请先填写“课程考核与课程目标对应关系”。",
+                        '提示',
+                        '请先填写[课程考核与课程目标对应关系]。',
                     )
                     return
                 outputs_dir = os.path.join(base_dir, "outputs")
@@ -824,8 +826,28 @@ class GradeAnalysisApp(QMainWindow):
                 with open(relation_json_path, "w", encoding="utf-8") as f:
                     json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
                 output_path = create_forward_template(base_dir, count, relation_json_path)
+            
+            # ===== 逆向模式（修改部分） =====
             else:
-                output_path = create_reverse_template(base_dir, count)
+                # 【新增】强制检查关系表
+                if not self.relation_payload:
+                    QMessageBox.warning(
+                        self,
+                        '提示',
+                        '逆向模式必须先填写[课程考核与课程目标对应关系表]。\n\n'
+                        '逆向推算需要知道考核环节和考核方式的结构才能正确反推成绩。',
+                    )
+                    return
+                
+                # 保存关系表到文件
+                outputs_dir = os.path.join(base_dir, "outputs")
+                os.makedirs(outputs_dir, exist_ok=True)
+                relation_json_path = os.path.join(outputs_dir, "relation_table.json")
+                with open(relation_json_path, "w", encoding="utf-8") as f:
+                    json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
+                
+                # 创建逆向模板（现在会强制使用关系表）
+                output_path = create_reverse_template(base_dir, count, relation_json_path)
 
             QMessageBox.information(
                 self,
