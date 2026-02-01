@@ -87,25 +87,39 @@ class RatioDialog(QDialog):
 # ==========================================
 # 弹窗：噪声注入详情
 class NoiseConfigDialog(QDialog):
-    def __init__(self, parent=None, available_subjects=None):
+    def __init__(self, parent=None, available_subjects=None, existing_config=None):
+        """
+        噪声配置对话框
+        :param available_subjects: 可选的科目列表
+        :param existing_config: 已有的配置，用于恢复上次设置
+        """
         super().__init__(parent)
         self.setWindowTitle("噪声注入详情配置")
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "..", "calculator.ico")))
         self.setFixedWidth(450)
         self.available_subjects = available_subjects if available_subjects else ['平时作业', '期末考试']
+        self.existing_config = existing_config  # 新增：保存已有配置
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setSpacing(15)
+        
         # 1. 覆盖率设置
         group_rate = QGroupBox("1. 异常覆盖率 (Trigger Rate)")
         rate_layout = QVBoxLayout()
         h_layout = QHBoxLayout()
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 100) # 使用 0-100 对应 0.0-1.0 的百分比
-        self.slider.setValue(10)     # 默认 0.1 (10%)
-        self.label_rate = QLabel("0.10")
+        self.slider.setRange(0, 100)
+        
+        # 恢复已有配置
+        if self.existing_config:
+            saved_ratio = int(self.existing_config.get('noise_ratio', 0.1) * 100)
+            self.slider.setValue(saved_ratio)
+        else:
+            self.slider.setValue(10)  # 默认 0.1 (10%)
+        
+        self.label_rate = QLabel(f"{self.slider.value()/100:.2f}")
         self.label_rate.setStyleSheet("font-weight: bold; color: #333;")
         self.slider.valueChanged.connect(lambda v: self.label_rate.setText(f"{v/100:.2f}"))
         h_layout.addWidget(self.slider)
@@ -113,6 +127,7 @@ class NoiseConfigDialog(QDialog):
         rate_layout.addLayout(h_layout)
         group_rate.setLayout(rate_layout)
         layout.addWidget(group_rate)
+        
         # 2. 挂科严重程度选择
         group_mode = QGroupBox("2. 挂科严重程度 (Severity Mode)")
         mode_layout = QVBoxLayout()
@@ -120,7 +135,19 @@ class NoiseConfigDialog(QDialog):
         self.rb_random = QRadioButton("随机分布 (40-59分) - [默认]")
         self.rb_near = QRadioButton("边缘挂科 (55-59分) - [模拟惜败]")
         self.rb_catastrophic = QRadioButton("严重缺失 (0-40分) - [模拟缺考]")
-        self.rb_random.setChecked(True)
+        
+        # 恢复已有配置
+        if self.existing_config:
+            saved_mode = self.existing_config.get('severity_mode', 'random')
+            if saved_mode == 'near_miss':
+                self.rb_near.setChecked(True)
+            elif saved_mode == 'catastrophic':
+                self.rb_catastrophic.setChecked(True)
+            else:
+                self.rb_random.setChecked(True)
+        else:
+            self.rb_random.setChecked(True)
+        
         self.btn_group.addButton(self.rb_random, 1)
         self.btn_group.addButton(self.rb_near, 2)
         self.btn_group.addButton(self.rb_catastrophic, 3)
@@ -129,17 +156,29 @@ class NoiseConfigDialog(QDialog):
         mode_layout.addWidget(self.rb_catastrophic)
         group_mode.setLayout(mode_layout)
         layout.addWidget(group_mode)
+        
         # 3. 目标科目选择
         group_target = QGroupBox("3. 允许挂科的科目 (Target Preference)")
         target_layout = QGridLayout()
         self.checks = {}
+        
+        # 获取已保存的允许科目列表
+        saved_allowed = []
+        if self.existing_config:
+            saved_allowed = self.existing_config.get('allowed_items', [])
+        
         for i, subject in enumerate(self.available_subjects):
             cb = QCheckBox(subject)
-            cb.setChecked(True) # 默认全选
+            # 恢复已有配置：如果有保存的配置，按保存的来；否则默认全选
+            if self.existing_config:
+                cb.setChecked(subject in saved_allowed)
+            else:
+                cb.setChecked(True)
             self.checks[subject] = cb
-            target_layout.addWidget(cb, i // 2, i % 2) # 网格两列布局
+            target_layout.addWidget(cb, i // 2, i % 2)
         group_target.setLayout(target_layout)
         layout.addWidget(group_target)
+        
         # 确认/取消按钮
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.setStyleSheet("QPushButton{border-radius:10px; padding:6px 16px;}")
@@ -542,7 +581,7 @@ class GradeAnalysisApp(QMainWindow):
         self.combo_noise = QComboBox()
         self.combo_noise.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.combo_noise.setMinimumContentsLength(0)
-        self.combo_noise.addItems(["无", "详情..."])
+        self.combo_noise.addItems(["无", "已配置", "详情..."])  # 新增"已配置"选项
         self.combo_noise.currentIndexChanged.connect(self.on_noise_changed)
         self.combo_style = QComboBox()
         self.combo_style.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
@@ -653,15 +692,40 @@ class GradeAnalysisApp(QMainWindow):
         self.combo_noise.setStyleSheet(style)
 
     def on_noise_changed(self, index):
-        if self.combo_noise.currentText() == "详情...":
+        current_text = self.combo_noise.currentText()
+        
+        # 点击"详情..."时打开配置弹窗
+        if current_text == "详情...":
             subjects = self._get_relation_subjects() or ['平时作业', '期末考试']
-            dialog = NoiseConfigDialog(self, available_subjects=subjects)
+            # 传入已有配置，用于恢复上次设置
+            dialog = NoiseConfigDialog(self, available_subjects=subjects, existing_config=self.noise_config)
             if dialog.exec():
                 self.noise_config = dialog.get_config()
                 self.status_label.setText(
                     f"噪声配置已更新：覆盖率{int(self.noise_config['noise_ratio']*100)}%"
                 )
-            self.combo_noise.setCurrentIndex(0)
+                # 设置成功后，下拉框显示"已配置"
+                self.combo_noise.blockSignals(True)  # 防止触发循环
+                self.combo_noise.setCurrentIndex(1)  # 索引1是"已配置"
+                self.combo_noise.blockSignals(False)
+            else:
+                # 用户取消，恢复之前的选择
+                self.combo_noise.blockSignals(True)
+                if self.noise_config:
+                    self.combo_noise.setCurrentIndex(1)  # 已配置
+                else:
+                    self.combo_noise.setCurrentIndex(0)  # 无
+                self.combo_noise.blockSignals(False)
+        
+        # 点击"无"时清除配置
+        elif current_text == "无":
+            self.noise_config = None
+            self.status_label.setText("噪声注入已关闭")
+        
+        # 点击"已配置"时不做任何操作（保持现有配置）
+        # elif current_text == "已配置":
+        #     pass
+
 
     def _get_relation_subjects(self):
         """从对应关系载荷中提取科目名称"""

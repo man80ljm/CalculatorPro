@@ -868,16 +868,105 @@ class ExcelCalcMixin:
 
             return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
 
+        def _generate_forward_score_table(self, students_method_scores: list, links: list) -> str:
+            """
+            根据逆向推算的明细数据，生成二维正向成绩表。
+            格式：行=学生，列=考核环节下的方法，带两行表头/合并单元格
+            用于后期正向验证。
+            
+            Args:
+                students_method_scores: 学生方法级分数列表
+                    格式: [{"name": "张三", "method_scores": {"平时考核-作业": 85, ...}}, ...]
+                links: 关系表中的考核环节配置
+            
+            Returns:
+                生成的Excel文件路径
+            """
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "正向成绩表"
+            
+            # 构建表头结构
+            # 第一行：姓名 | 平时考核(跨多列) | 期中考核(跨多列) | 期末考核(跨多列)
+            # 第二行：姓名 | 作业1 | 作业2 | ... | 期中考试 | ... | 期末考试 | ...
+            
+            ws.cell(row=1, column=1, value="姓名")
+            ws.cell(row=2, column=1, value="姓名")
+            ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
+            
+            col = 2
+            method_col_map = {}  # 用于记录每个方法对应的列号，key为 "{link_name}-{method_name}"
+            
+            for link in links:
+                link_name = link.get("name", "")
+                methods = link.get("methods", []) or [{"name": "无"}]
+                start_col = col
+                
+                for method in methods:
+                    m_name = method.get("name", "无")
+                    ws.cell(row=2, column=col, value=m_name)
+                    # 使用 link_name-method_name 作为唯一key
+                    method_col_map[f"{link_name}-{m_name}"] = col
+                    col += 1
+                
+                end_col = col - 1
+                ws.cell(row=1, column=start_col, value=link_name)
+                if end_col > start_col:
+                    ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
+            
+            # 填充学生数据
+            row_idx = 3
+            for student in students_method_scores:
+                name = student.get("name", "")
+                method_scores = student.get("method_scores", {})
+                
+                ws.cell(row=row_idx, column=1, value=name)
+                
+                # 填充各方法的分数
+                for key, col_num in method_col_map.items():
+                    score = method_scores.get(key, 0)
+                    ws.cell(row=row_idx, column=col_num, value=round(score, 1) if isinstance(score, (int, float)) else score)
+                
+                row_idx += 1
+            
+            # 应用样式
+            align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            thin = Side(style='thin')
+            border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            header_font = Font(bold=True)
+            
+            for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                for cell in r:
+                    cell.alignment = align
+                    cell.border = border
+                    if cell.row <= 2:
+                        cell.font = header_font
+            
+            # 调整列宽
+            ws.column_dimensions['A'].width = 10
+            for c in range(2, col):
+                ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = 12
+            
+            # 保存文件
+            output_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "outputs")
+            os.makedirs(output_dir, exist_ok=True)
+            safe_name = self._safe_filename(self.course_name_input.text())
+            output_path = os.path.join(output_dir, f"{safe_name}正向成绩表（逆向生成）.xlsx")
+            wb.save(output_path)
+            
+            return output_path
+
         def process_reverse_grades(self, spread_mode='medium', distribution='uniform'):
             """
             逆向成绩导入与生成明细
             
             流程：
             1. 读取逆向模板（环节总分）
-            2. 逆向推算出方法级分数
+            2. 逆向推算出方法级分数（使用 spread_mode 和 distribution）
             3. 用方法级分数生成与正向一致的成绩明细表
-            4. 生成表2（课程成绩统计）+ Word版
-            5. 生成表5（课程目标达成情况评价结果）+ Word版
+            4. 生成二维正向成绩表（用于正向验证）
+            5. 生成表2（课程成绩统计）+ Word版
+            6. 生成表5（课程目标达成情况评价结果）+ 独立Excel + Word版
             """
             # ===== 第一步：读取和验证输入 =====
             df_input = pd.read_excel(self.input_file)
@@ -910,8 +999,9 @@ class ExcelCalcMixin:
             }
             dist_type = dist_map.get(distribution, "normal")
 
-            # 存储每个学生的方法级分数，用于后续生成明细表
-            students_method_scores = []  # [{name, method_scores: {method_name: score}}]
+            # 存储每个学生的方法级分数
+            # 使用 {link_name}-{method_name} 作为key，避免同名方法冲突
+            students_method_scores = []
 
             for _, row in df_input.iterrows():
                 name = row.get("姓名")
@@ -937,20 +1027,22 @@ class ExcelCalcMixin:
                     for m, w in zip(methods, weights):
                         structure[m.get("name", "无")] = {"weight": w, "type": dist_type}
 
-                    # 逆向推算
+                    # 逆向推算 - 传入 spread_mode
                     if structure and sum(weights) > 0:
                         breakdown = self.reverse_engine.generate_breakdown(
                             link_score,
                             structure,
                             noise_config=self.noise_config,
+                            spread_mode=spread_mode,  # 新增：传递 spread_mode
                         )
                     else:
                         breakdown = {m.get("name", "无"): 0 for m in methods}
 
-                    # 记录方法级分数
+                    # 记录方法级分数，使用 {link_name}-{method_name} 作为key
                     for m in methods:
                         m_name = m.get("name", "无")
-                        student_data["method_scores"][m_name] = breakdown.get(m_name, 0)
+                        full_key = f"{link_name}-{m_name}"
+                        student_data["method_scores"][full_key] = breakdown.get(m_name, 0)
 
                 students_method_scores.append(student_data)
 
@@ -1004,12 +1096,13 @@ class ExcelCalcMixin:
 
                     for idx, m in enumerate(methods):
                         m_name = m.get("name", "无")
-                        score = method_scores.get(m_name, 0)
+                        full_key = f"{link_name}-{m_name}"
+                        score = method_scores.get(full_key, 0)
                         
-                        # 累积用于计算平均分
-                        if m_name not in method_scores_all:
-                            method_scores_all[m_name] = []
-                        method_scores_all[m_name].append(score)
+                        # 累积用于计算平均分（使用完整key）
+                        if full_key not in method_scores_all:
+                            method_scores_all[full_key] = []
+                        method_scores_all[full_key].append(score)
 
                         supports = m.get("supports", {}) or {}
                         support_vals = [float(supports.get(k, 0)) for k in obj_keys]
@@ -1066,9 +1159,6 @@ class ExcelCalcMixin:
                     cell.alignment = align
                     cell.border = border
 
-            # 计算各方法平均分
-            method_avgs = {m_name: float(np.mean(scores)) for m_name, scores in method_scores_all.items()}
-
             # ===== 第四步：生成表2（课程成绩统计） =====
             stats_ws = wb.create_sheet(title="课程成绩统计")
             total_count = len(total_scores)
@@ -1102,10 +1192,10 @@ class ExcelCalcMixin:
 
             composition_parts = []
             for link in links:
-                name = link.get("name", "")
-                ratio = link.get("ratio", 0)
-                if name:
-                    composition_parts.append(f"{name}（{_fmt_ratio(ratio)}）")
+                lname = link.get("name", "")
+                lratio = link.get("ratio", 0)
+                if lname:
+                    composition_parts.append(f"{lname}（{_fmt_ratio(lratio)}）")
             composition_text = " + ".join(composition_parts)
 
             stats_ws.append(["成绩构成", composition_text, "", "", "", ""])
@@ -1141,8 +1231,8 @@ class ExcelCalcMixin:
             other_cm = (total_cm - first_cm) / 5
             cm_to_width = 4.0
             stats_ws.column_dimensions["A"].width = round(first_cm * cm_to_width, 2)
-            for col in ["B", "C", "D", "E", "F"]:
-                stats_ws.column_dimensions[col].width = round(other_cm * cm_to_width, 2)
+            for col_letter in ["B", "C", "D", "E", "F"]:
+                stats_ws.column_dimensions[col_letter].width = round(other_cm * cm_to_width, 2)
 
             stat_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
             stat_border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -1153,6 +1243,24 @@ class ExcelCalcMixin:
             stats_ws.row_dimensions[3].height = 36
 
             # ===== 第五步：生成表5（课程目标达成情况评价结果） =====
+            # 计算各方法平均分（用于表5计算）
+            # 需要还原为 method_name 作为 key
+            method_avgs = {}
+            for full_key, scores in method_scores_all.items():
+                # full_key 格式为 "link_name-method_name"
+                # 提取 method_name
+                parts = full_key.split("-", 1)
+                if len(parts) == 2:
+                    m_name = parts[1]
+                else:
+                    m_name = full_key
+                # 如果同名方法在不同环节，取平均
+                if m_name not in method_avgs:
+                    method_avgs[m_name] = []
+                method_avgs[m_name].extend(scores)
+            method_avgs = {k: float(np.mean(v)) for k, v in method_avgs.items()}
+
+            # 创建表5内容（嵌入到主工作簿）
             eval_ws = wb.create_sheet(title="课程目标达成情况评价结果")
             eval_headers = [
                 "课程分目标",
@@ -1285,12 +1393,46 @@ class ExcelCalcMixin:
             os.makedirs(output_dir, exist_ok=True)
             safe_name = self._safe_filename(self.course_name_input.text())
             
-            # 保存主Excel（包含成绩明细、统计表、达成度评价结果）
-            # 文件名加"（逆向）"后缀
+            # 1. 保存主Excel（成绩明细 + 统计表 + 达成度评价结果）
             output_path = os.path.join(output_dir, f"{safe_name}成绩明细（逆向）.xlsx")
             wb.save(output_path)
 
-            # 导出表5的Word版本
+            # 2. 生成二维正向成绩表（用于正向验证）
+            try:
+                self._generate_forward_score_table(students_method_scores, links)
+            except Exception as e:
+                print(f"生成正向成绩表失败: {e}")
+
+            # 3. 生成独立的表5 Excel文件（与正向保持一致）
+            try:
+                eval_wb = openpyxl.Workbook()
+                eval_ws_standalone = eval_wb.active
+                eval_ws_standalone.title = "课程目标达成情况评价结果"
+                
+                # 复制表5内容到独立文件
+                for row in eval_ws.iter_rows(values_only=True):
+                    eval_ws_standalone.append(row)
+                
+                # 应用样式
+                for r in eval_ws_standalone.iter_rows(min_row=1, max_row=eval_ws_standalone.max_row, min_col=1, max_col=7):
+                    for cell in r:
+                        cell.alignment = eval_align
+                        cell.border = eval_border
+                
+                eval_ws_standalone.column_dimensions["A"].width = 14
+                eval_ws_standalone.column_dimensions["B"].width = 12
+                eval_ws_standalone.column_dimensions["C"].width = 10
+                eval_ws_standalone.column_dimensions["D"].width = 12
+                eval_ws_standalone.column_dimensions["E"].width = 18
+                eval_ws_standalone.column_dimensions["F"].width = 12
+                eval_ws_standalone.column_dimensions["G"].width = 16
+                
+                eval_output_path = os.path.join(output_dir, f"{safe_name}课程目标达成情况评价结果（逆向）.xlsx")
+                eval_wb.save(eval_output_path)
+            except Exception as e:
+                print(f"生成独立表5 Excel失败: {e}")
+
+            # 4. 导出表5的Word版本
             try:
                 self._export_eval_result_docx(
                     links, obj_keys, method_avgs, prev_data,
@@ -1300,4 +1442,3 @@ class ExcelCalcMixin:
                 print(f"导出表5 Word失败: {e}")
 
             return round(float(np.mean(total_scores)) if total_scores else 0.0, 2)
-
