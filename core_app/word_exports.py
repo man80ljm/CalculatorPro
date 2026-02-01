@@ -215,7 +215,12 @@ class WordExportMixin:
                     supports = m.get('supports', {}) or {}
                     weight = float(supports.get(obj_key, 0))
                     support_sum += weight
-                    method_avg = float(method_avgs.get(m.get('name', ''), 0))
+                    m_name = m.get('name', '')
+                    full_key = f"{link_name}||{m_name}"
+                    if full_key in method_avgs:
+                        method_avg = float(method_avgs.get(full_key, 0))
+                    else:
+                        method_avg = float(method_avgs.get(m_name, 0))
                     actual_sum += (method_avg / 100.0) * weight * 100.0
 
                 obj_weight_sum += support_sum * link_ratio * 100.0

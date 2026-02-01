@@ -2,6 +2,7 @@
 import os
 import json
 import pandas as pd
+from openpyxl import load_workbook
 from PyQt6.QtGui import QIcon, QDoubleValidator, QIntValidator
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -361,6 +362,7 @@ class GradeAnalysisApp(QMainWindow):
                     self.course_open_info = config.get('course_open_info', {})
                     self.course_basic_info = config.get('course_basic_info', {})
                     self.grad_req_map = config.get('grad_req_map', [])
+                    self.noise_config = config.get('noise_config')
                     if self.relation_payload and not self.num_objectives:
                         self.num_objectives = self.relation_payload.get("objectives_count", 0)
                     if 'ratios' in config:
@@ -377,7 +379,7 @@ class GradeAnalysisApp(QMainWindow):
         if not name and isinstance(self.course_basic_info, dict):
             name = self.course_basic_info.get('course_name') or ''
         name = str(name).strip()
-        return name if name else '????'
+        return name if name else '未命名'
 
     def save_config(self):
         config_dir = os.path.join(os.getenv('APPDATA') or os.path.expanduser('~'), 'CalculatorApp')
@@ -391,6 +393,7 @@ class GradeAnalysisApp(QMainWindow):
             'course_open_info': self.course_open_info,
             'course_basic_info': self.course_basic_info,
             'grad_req_map': self.grad_req_map,
+            'noise_config': self.noise_config,
             'ratios': {
                 'usual': self.usual_ratio,
                 'midterm': self.midterm_ratio,
@@ -583,6 +586,8 @@ class GradeAnalysisApp(QMainWindow):
         self.combo_noise.setMinimumContentsLength(0)
         self.combo_noise.addItems(["无", "已配置", "详情..."])  # 新增"已配置"选项
         self.combo_noise.currentIndexChanged.connect(self.on_noise_changed)
+        if self.noise_config:
+            self.combo_noise.setCurrentIndex(1)
         self.combo_style = QComboBox()
         self.combo_style.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.combo_style.setMinimumContentsLength(0)
@@ -614,7 +619,6 @@ class GradeAnalysisApp(QMainWindow):
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setStyleSheet("QProgressBar { padding: 0px; text-align: right; } QProgressBar::chunk { background-color: #1E88E5; }")
         self.status_label = QLabel("")
-        # ?????????????????????
         self.status_bar = self.statusBar()
         self.status_bar.setFixedHeight(24)
         self.status_bar.setContentsMargins(30, 0, 30, 0)
@@ -708,6 +712,7 @@ class GradeAnalysisApp(QMainWindow):
                 self.combo_noise.blockSignals(True)  # 防止触发循环
                 self.combo_noise.setCurrentIndex(1)  # 索引1是"已配置"
                 self.combo_noise.blockSignals(False)
+                self.save_config()
             else:
                 # 用户取消，恢复之前的选择
                 self.combo_noise.blockSignals(True)
@@ -721,6 +726,7 @@ class GradeAnalysisApp(QMainWindow):
         elif current_text == "无":
             self.noise_config = None
             self.status_label.setText("噪声注入已关闭")
+            self.save_config()
         
         # 点击"已配置"时不做任何操作（保持现有配置）
         # elif current_text == "已配置":
@@ -782,7 +788,6 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_course_open_dialog(self):
         data = dict(self.course_open_info or {})
-        # ?????????????????????????
         if not data.get('course_name') and (self.course_basic_info or {}).get('course_name'):
             data['course_name'] = (self.course_basic_info or {}).get('course_name', '')
         if data.get('course_name') == '课程名称':
@@ -790,7 +795,6 @@ class GradeAnalysisApp(QMainWindow):
         dialog = CourseOpenDialog(self, data)
         if dialog.exec():
             self.course_open_info = dialog.get_data()
-            # ????????????????????????
             if self.course_open_info.get('course_name'):
                 if not self.course_basic_info:
                     self.course_basic_info = {}
@@ -799,7 +803,6 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_course_basic_dialog(self):
         data = dict(self.course_basic_info or {})
-        # ???????????????????????
         if not data.get('course_name') and (self.course_open_info or {}).get('course_name'):
             data['course_name'] = (self.course_open_info or {}).get('course_name', '')
         if data.get('course_name') == '课程名称':
@@ -807,7 +810,6 @@ class GradeAnalysisApp(QMainWindow):
         dialog = CourseBasicDialog(self, data)
         if dialog.exec():
             self.course_basic_info = dialog.get_data()
-            # ????????????????????????
             if self.course_basic_info.get('course_name'):
                 if not self.course_open_info:
                     self.course_open_info = {}
@@ -827,10 +829,6 @@ class GradeAnalysisApp(QMainWindow):
             self.save_config()
 
     def open_relation_table(self):
-
-
-
-
         """打开课程目标对应关系编辑器"""    
         if self.usual_ratio in ("", None) or self.midterm_ratio in ("", None) or self.final_ratio in ("", None):
              QMessageBox.warning(self, '提示', '请先在“成绩占比”中设置比例')
@@ -929,13 +927,115 @@ class GradeAnalysisApp(QMainWindow):
         """选择 Excel 成绩单"""
         file_name, _ = QFileDialog.getOpenFileName(self, "选择成绩单文件", "", "Excel Files (*.xlsx)")
         if file_name:
+            # 先用模板结构特征判断类型，避免被关系表不一致误判
+            template_type = self._detect_template_type(file_name)
+            is_forward_mode = (self.tabs.currentIndex() == 0)
+            if template_type == "forward" and not is_forward_mode:
+                QMessageBox.warning(self, "提示", "检测到正向模板，当前为逆向模式，请导入逆向模板成绩。")
+                return
+            if template_type == "reverse" and is_forward_mode:
+                QMessageBox.warning(self, "提示", "检测到逆向模板，当前为正向模式，请导入正向模板成绩。")
+                return
+
+            # 根据当前模式校验模板
+            try:
+                temp_processor = GradeProcessor(
+                    MockInput(self._get_course_name()),
+                    MockInput(str(self.num_objectives)),
+                    self.weight_inputs or [],
+                    MockInput(str(self.usual_ratio)),
+                    MockInput(str(self.midterm_ratio)),
+                    MockInput(str(self.final_ratio)),
+                    self.status_label,
+                    file_name,
+                    course_description=self.course_description,
+                    objective_requirements=self.objective_requirements,
+                    relation_payload=self.relation_payload
+                )
+                is_forward = False
+                is_reverse = False
+                forward_err = None
+                reverse_err = None
+
+                try:
+                    temp_processor._validate_forward_headers(file_name)
+                    is_forward = True
+                except Exception as e:
+                    forward_err = e
+
+                try:
+                    df_tmp = pd.read_excel(file_name).fillna(0)
+                    temp_processor._validate_reverse_headers(df_tmp)
+                    is_reverse = True
+                except Exception as e:
+                    reverse_err = e
+
+                is_forward_mode = (self.tabs.currentIndex() == 0)
+                if is_forward_mode and is_reverse and not is_forward:
+                    QMessageBox.warning(self, "提示", "检测到逆向模板，当前为正向模式，请导入正向模板成绩。")
+                    return
+                if (not is_forward_mode) and is_forward and not is_reverse:
+                    QMessageBox.warning(self, "提示", "检测到正向模板，当前为逆向模式，请导入逆向模板成绩。")
+                    return
+
+                if is_forward_mode and not is_forward:
+                    raise forward_err or ValueError("导入文件与当前模式不匹配")
+                if (not is_forward_mode) and not is_reverse:
+                    raise reverse_err or ValueError("导入文件与当前模式不匹配")
+            except Exception as e:
+                QMessageBox.warning(self, "提示", f"导入文件与当前模式不匹配：{str(e)}")
+                return
+
             self.input_file = file_name
             self.status_label.setText(f"已选择文件: {os.path.basename(file_name)}")
+
+    def _detect_template_type(self, file_path: str) -> str:
+        """根据表头结构判断模板类型：forward / reverse / unknown"""
+        try:
+            wb = load_workbook(file_path, data_only=True)
+            ws = wb.active
+            max_col = ws.max_column
+
+            def header_value(row, col):
+                cell = ws.cell(row=row, column=col)
+                if cell.value is not None:
+                    return str(cell.value).strip()
+                for rng in ws.merged_cells.ranges:
+                    if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
+                        v = ws.cell(rng.min_row, rng.min_col).value
+                        return str(v).strip() if v is not None else ""
+                return ""
+
+            row1 = [header_value(1, c) for c in range(1, max_col + 1)]
+            row2 = [header_value(2, c) for c in range(1, max_col + 1)]
+            has_row1_merged = any(rng.min_row == 1 and rng.max_row == 1 for rng in ws.merged_cells.ranges)
+            row1_nonempty = [v for v in row1 if v]
+
+            # 正向模板：第1行有合并表头 或者 第1行有内容且第2行首列为“姓名”
+            if has_row1_merged or (row1_nonempty and row2 and row2[0] == "姓名"):
+                return "forward"
+
+            # 逆向模板：第1行首列为“姓名”，或“第1行空 + 第2行首列为姓名”
+            if (row1 and row1[0] == "姓名") or (not row1_nonempty and row2 and row2[0] == "姓名"):
+                return "reverse"
+        except Exception:
+            pass
+        return "unknown"
 
     def start_analysis(self):
         """开始处理并导出结果。"""
         if not self.input_file:
             QMessageBox.warning(self, '错误', '请先选择成绩单文件')
+            return
+
+        # 导出前复验模板类型，避免导入后切换模式造成误处理
+        template_type = self._detect_template_type(self.input_file)
+        is_forward_mode = (self.tabs.currentIndex() == 0)
+        if is_forward_mode and template_type == "reverse":
+            QMessageBox.warning(self, "提示", "当前为正向模式，请导入正向模板成绩。")
+            return
+        if (not is_forward_mode) and template_type == "forward":
+            QMessageBox.warning(self, "提示", "当前为逆向模式，请导入逆向模板成绩。")
             return
 
         # 底部状态栏和进度条

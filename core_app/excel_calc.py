@@ -480,24 +480,30 @@ class ExcelCalcMixin:
                 raise ValueError("\u6b63\u5411\u6a21\u677f\u4e00\u7ea7\u8868\u5934\u4e0e\u5173\u7cfb\u8868\u4e0d\u4e00\u81f4\uff0c\u8bf7\u91cd\u65b0\u4e0b\u8f7d\u6a21\u677f")
 
         def _validate_reverse_headers(self, df: pd.DataFrame):
-            """\u6821\u9a8c\u9006\u5411\u6a21\u677f\u8868\u5934"""
+            """校验逆向模板表头"""
             links = self._get_links()
             if links:
-                expected = ["\u59d3\u540d"] + [link.get("name", "").strip() for link in links]
+                expected = ["姓名"] + [link.get("name", "").strip() for link in links]
             else:
-                expected = ["\u59d3\u540d", "\u5e73\u65f6\u8003\u6838", "\u671f\u4e2d\u8003\u6838", "\u671f\u672b\u8003\u6838"]
+                expected = ["姓名", "平时考核", "期中考核", "期末考核"]
 
-            missing = [c for c in expected if c not in df.columns]
-            if missing:
-                raise ValueError(f"\u9006\u5411\u6a21\u677f\u7f3a\u5c11\u8868\u5934: {', '.join(missing)}")
+            actual = [str(c).strip() for c in df.columns]
+            actual = [c for c in actual if c and not c.startswith("Unnamed")]
+            if actual != expected:
+                raise ValueError("逆向模板表头与关系表不一致，请重新下载逆向模板")
 
+            # 识别正向模板（正向模板第2行第1列通常为“姓名”）
+            if not df.empty:
+                first_val = str(df.iloc[0, 0]).strip()
+                if first_val == "姓名":
+                    raise ValueError("检测到正向模板，请导入逆向模板成绩")
         def process_forward_grades(self, spread_mode='medium', distribution='uniform'):
             """\u6b63\u5411\u6210\u7ee9\u5bfc\u5165\u4e0e\u6821\u9a8c\uff0c\u8f93\u51fa\u8be6\u60c5\u6210\u7ee9\u660e\u7ec6\u8868"""
             self._validate_forward_headers(self.input_file)
             df = pd.read_excel(self.input_file, header=1)
             df = df.fillna(0)
 
-            # ??????????????????
+            # 修正首列为空导致的列名问题
             cols = list(df.columns)
             if cols:
                 first = str(cols[0]) if cols[0] is not None else ""
@@ -575,7 +581,7 @@ class ExcelCalcMixin:
 
                         supports = m.get("supports", {}) or {}
                         support_vals = [float(supports.get(k, 0)) for k in obj_keys]
-                        # ??????????????
+                        # 按目标支撑权重分配到各课程目标
                         obj_scores = [score * v for v in support_vals]
 
                         for i, v in enumerate(obj_scores):
@@ -591,7 +597,7 @@ class ExcelCalcMixin:
                         ws.append(row_values)
                         row_cursor += 1
 
-                    # ?????
+                    # 环节合计行
                     total_row = ["", link_label if row_cursor == link_start else "", "\u73af\u8282\u5408\u8ba1"]
                     total_row += [round(v, 2) for v in link_obj_scores]
                     total_row += ["", round(link_score, 2), ""]
@@ -611,7 +617,7 @@ class ExcelCalcMixin:
                 ws.append(final_row)
                 row_cursor += 1
 
-                # ??????????
+                # 填充姓名与等级（合并单元格）
                 ws.cell(row=student_start, column=1, value=name)
                 grade_col = len(header)
                 ws.cell(row=student_start, column=grade_col, value=grade)
@@ -620,7 +626,7 @@ class ExcelCalcMixin:
                 ws.merge_cells(start_row=student_start, start_column=grade_col, end_row=row_cursor - 1, end_column=grade_col)
                 total_scores.append(total_score)
 
-            # ????? + ??
+            # 统一样式与边框
             align = Alignment(horizontal='center', vertical='center', wrap_text=True)
             thin = Side(style='thin')
             border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -630,7 +636,7 @@ class ExcelCalcMixin:
                     cell.border = border
 
 
-            # ???????
+            # 成绩统计表
             stats_ws = wb.create_sheet(title="\u8bfe\u7a0b\u6210\u7ee9\u7edf\u8ba1")
             total_count = len(total_scores)
             max_score = round(max(total_scores), 2) if total_scores else 0
@@ -684,7 +690,7 @@ class ExcelCalcMixin:
             stats_ws.append(["\u5360\u8003\u6838\u4eba\u6570\u7684\u6bd4\u4f8b"] + [f"{r*100:.2f}%" for r in ratios])
             self._export_stats_docx(composition_text, max_score, min_score, avg_score, counts, ratios)
 
-            # ??????????????/????????
+            # 统计表字体样式与加粗区域
             base_font = Font(name="\u4eff\u5b8b", size=12)
             bold_font = Font(name="\u4eff\u5b8b", size=12, bold=True)
             fixed_cells = {
@@ -695,16 +701,16 @@ class ExcelCalcMixin:
                 for cell in r:
                     cell.font = bold_font if cell.coordinate in fixed_cells else base_font
 
-            # ?????? 14.64cm?A ? 3.75cm?????
+            # 列宽设置（总宽 14.64cm，首列 3.75cm）
             total_cm = 14.64
             first_cm = 3.75
             other_cm = (total_cm - first_cm) / 5
-            cm_to_width = 4.0  # ????
+            cm_to_width = 4.0  # cm 转 Excel 列宽系数
             stats_ws.column_dimensions["A"].width = round(first_cm * cm_to_width, 2)
             for col in ["B", "C", "D", "E", "F"]:
                 stats_ws.column_dimensions[col].width = round(other_cm * cm_to_width, 2)
 
-            # ??
+            # 统计表样式
             stat_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
             stat_border = Border(left=thin, right=thin, top=thin, bottom=thin)
             for r in stats_ws.iter_rows(min_row=1, max_row=stats_ws.max_row, min_col=1, max_col=stats_ws.max_column):
@@ -895,7 +901,7 @@ class ExcelCalcMixin:
             ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
             
             col = 2
-            method_col_map = {}  # 用于记录每个方法对应的列号，key为 "{link_name}-{method_name}"
+            method_col_map = {}  # 用于记录每个方法对应的列号，key为 "{link_name}||{method_name}"
             
             for link in links:
                 link_name = link.get("name", "")
@@ -906,7 +912,7 @@ class ExcelCalcMixin:
                     m_name = method.get("name", "无")
                     ws.cell(row=2, column=col, value=m_name)
                     # 使用 link_name-method_name 作为唯一key
-                    method_col_map[f"{link_name}-{m_name}"] = col
+                    method_col_map[f"{link_name}||{m_name}"] = col
                     col += 1
                 
                 end_col = col - 1
@@ -1000,7 +1006,7 @@ class ExcelCalcMixin:
             dist_type = dist_map.get(distribution, "normal")
 
             # 存储每个学生的方法级分数
-            # 使用 {link_name}-{method_name} 作为key，避免同名方法冲突
+            # 使用 {link_name}||{method_name} 作为key，避免同名方法冲突
             students_method_scores = []
 
             for _, row in df_input.iterrows():
@@ -1038,10 +1044,10 @@ class ExcelCalcMixin:
                     else:
                         breakdown = {m.get("name", "无"): 0 for m in methods}
 
-                    # 记录方法级分数，使用 {link_name}-{method_name} 作为key
+                    # 记录方法级分数，使用 {link_name}||{method_name} 作为key
                     for m in methods:
                         m_name = m.get("name", "无")
-                        full_key = f"{link_name}-{m_name}"
+                        full_key = f"{link_name}||{m_name}"
                         student_data["method_scores"][full_key] = breakdown.get(m_name, 0)
 
                 students_method_scores.append(student_data)
@@ -1096,7 +1102,7 @@ class ExcelCalcMixin:
 
                     for idx, m in enumerate(methods):
                         m_name = m.get("name", "无")
-                        full_key = f"{link_name}-{m_name}"
+                        full_key = f"{link_name}||{m_name}"
                         score = method_scores.get(full_key, 0)
                         
                         # 累积用于计算平均分（使用完整key）
@@ -1244,21 +1250,8 @@ class ExcelCalcMixin:
 
             # ===== 第五步：生成表5（课程目标达成情况评价结果） =====
             # 计算各方法平均分（用于表5计算）
-            # 需要还原为 method_name 作为 key
-            method_avgs = {}
-            for full_key, scores in method_scores_all.items():
-                # full_key 格式为 "link_name-method_name"
-                # 提取 method_name
-                parts = full_key.split("-", 1)
-                if len(parts) == 2:
-                    m_name = parts[1]
-                else:
-                    m_name = full_key
-                # 如果同名方法在不同环节，取平均
-                if m_name not in method_avgs:
-                    method_avgs[m_name] = []
-                method_avgs[m_name].extend(scores)
-            method_avgs = {k: float(np.mean(v)) for k, v in method_avgs.items()}
+            # method_avgs_full 使用 {link_name}||{method_name} 作为key，避免同名方法混算
+            method_avgs_full = {k: float(np.mean(v)) for k, v in method_scores_all.items()}
 
             # 创建表5内容（嵌入到主工作簿）
             eval_ws = wb.create_sheet(title="课程目标达成情况评价结果")
@@ -1306,7 +1299,8 @@ class ExcelCalcMixin:
                         weight = float(supports.get(obj_key, 0))
                         support_sum += weight
                         m_name = m.get("name")
-                        m_avg = float(method_avgs.get(m_name, 0))
+                        full_key = f"{link_name}||{m_name}"
+                        m_avg = float(method_avgs_full.get(full_key, 0))
                         actual_sum += m_avg * weight
 
                     target_weight = link_ratio * 100.0 * support_sum
@@ -1435,7 +1429,7 @@ class ExcelCalcMixin:
             # 4. 导出表5的Word版本
             try:
                 self._export_eval_result_docx(
-                    links, obj_keys, method_avgs, prev_data,
+                    links, obj_keys, method_avgs_full, prev_data,
                     total_attainment, expected_attainment, prev_total
                 )
             except Exception as e:

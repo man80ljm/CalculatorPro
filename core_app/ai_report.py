@@ -232,7 +232,7 @@ class AIReportMixin:
             safe_name = re.sub(r'[\/:*?"<>|]', '_', course_name)
             output_file = base_dir / f"6.课程目标达成情况分析、存在问题及改进措施表.docx"
 
-            # ???? xlsx ????????
+            # 删除旧版 xlsx 兼容文件
             old_xlsx = base_dir / f"{safe_name}课程分目标达成情况分析、存在问题及改进措施.xlsx"
             if old_xlsx.exists():
                 old_xlsx.unlink(missing_ok=True)
@@ -271,8 +271,8 @@ class AIReportMixin:
             table.columns[0].width = Cm(left_col_cm)
             table.columns[1].width = Cm(right_col_cm)
 
-            fixed_size = Pt(15)  # ??
-            answer_size = Pt(14)  # ??
+            fixed_size = Pt(15)  # 标题字体
+            answer_size = Pt(14)  # 正文字体
 
             for r_idx, (text, kind) in enumerate(rows):
                 row = table.rows[r_idx]
