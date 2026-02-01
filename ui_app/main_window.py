@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QButtonGroup, QCheckBox, QSizePolicy)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core import GradeProcessor
-from utils import get_app_root, get_outputs_dir
+from utils import get_app_root, get_outputs_dir, get_resource_path
 from io_app.excel_templates import create_forward_template, create_reverse_template
 from relation_table import RelationTableSetupDialog, RelationTableEditorDialog
 from ui_app.settings_dialog import SettingsDialog
@@ -1183,8 +1183,7 @@ class GradeAnalysisApp(QMainWindow):
 
         output_report = ""
         try:
-            root = get_app_root()
-            template_path = os.path.join(root, "report_template.docx")
+            template_path = get_resource_path("report_template.docx")
             output_dir = get_outputs_dir()
             if os.path.exists(template_path):
                 builder = ReportBuilder(template_path, output_dir)

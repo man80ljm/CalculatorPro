@@ -65,3 +65,9 @@ def get_outputs_dir() -> str:
     outputs_dir = os.path.join(get_app_root(), "outputs")
     os.makedirs(outputs_dir, exist_ok=True)
     return outputs_dir
+
+def get_resource_path(relative_path: str) -> str:
+    """Get resource path for both source and PyInstaller builds."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath(os.path.dirname(__file__)), relative_path)

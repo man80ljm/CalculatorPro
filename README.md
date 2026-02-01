@@ -73,17 +73,14 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 在项目根目录执行：
 
 ```bash
-pyinstaller -F -w \
-  --icon=calculator.ico \
-  --add-data "calculator.ico;." \
-  --add-data "report_template.docx;." \
-  main.py
+pyinstaller --onedir -w --clean --noconfirm --icon=calculator.ico --add-data "calculator.ico;." --add-data "report_template.docx;." --collect-all PyQt6 --collect-submodules docx --collect-submodules openpyxl --collect-submodules pandas --collect-submodules numpy main.py
 ```
 
 说明：
-- `-F` 打包为单文件
+- `--onedir` 打包为目录模式
 - `-w` 去掉控制台
 - 必须带入 `calculator.ico` 与 `report_template.docx`
+- 打包后模板会被放到 `_internal`（或 onefile 临时目录），程序会从资源目录读取
 
 ## 常见问题
 
