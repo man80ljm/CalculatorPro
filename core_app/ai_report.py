@@ -9,7 +9,7 @@ from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
 import openpyxl
 from openpyxl.utils.dataframe import dataframe_to_rows
 from apply_noise import GradeReverseEngine
-from utils import normalize_score, get_grade_level, calculate_final_score, calculate_achievement_level, adjust_column_widths
+from utils import normalize_score, get_grade_level, calculate_final_score, calculate_achievement_level, adjust_column_widths, get_outputs_dir
 import time
 import random
 from docx import Document
@@ -219,7 +219,7 @@ class AIReportMixin:
                 raise ValueError(f"\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\u5931\u8d25: {str(e)}")
 
         def generate_improvement_report(self, answers: list[str] | None, output_dir: str | None = None) -> str:
-            base_dir = Path(output_dir) if output_dir else (Path(__file__).resolve().parent.parent / 'outputs')
+            base_dir = Path(output_dir) if output_dir else Path(get_outputs_dir())
             base_dir.mkdir(parents=True, exist_ok=True)
 
             course_name = getattr(self, 'course_name', '')

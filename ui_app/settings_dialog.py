@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
 )
+from utils import get_outputs_dir
 
 
 class TestApiThread(QThread):
@@ -274,7 +275,7 @@ class SettingsDialog(QDialog):
 
     def _export_course_basic_word(self, data: dict):
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        output_dir = os.path.join(root, 'outputs')
+        output_dir = get_outputs_dir()
         os.makedirs(output_dir, exist_ok=True)
         course_name = (data.get('course_name') or '\u8bfe\u7a0b').strip()
         safe_name = re.sub(r'[\\/:*?"<>|]', '_', course_name)
@@ -320,7 +321,7 @@ class SettingsDialog(QDialog):
 
     def _export_grad_req_docx(self, grad_req_map):
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        output_dir = os.path.join(root, 'outputs')
+        output_dir = get_outputs_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(
             output_dir,

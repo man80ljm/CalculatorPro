@@ -6,6 +6,7 @@ import glob
 from docx import Document
 from copy import deepcopy
 from datetime import datetime
+from utils import get_outputs_dir
 
 
 class ReportBuilder:
@@ -155,9 +156,8 @@ class ReportBuilder:
     
     def _insert_documents(self, doc):
         """在模板中插入各个文档的内容"""
-        # 获取outputs目录（与模板文件同级）
-        base_dir = os.path.dirname(self.template_path)
-        outputs_dir = os.path.join(base_dir, 'outputs')
+        # 获取outputs目录（统一到应用根目录）
+        outputs_dir = get_outputs_dir()
         
         print(f"\n{'='*60}")
         print(f"[ReportBuilder] 查找文档目录: {outputs_dir}")

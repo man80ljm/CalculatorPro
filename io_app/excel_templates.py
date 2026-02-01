@@ -2,14 +2,14 @@ import json
 import os
 from typing import Dict, List, Tuple
 
+from utils import get_outputs_dir
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Protection, Border, Side
 
 
 def _ensure_outputs_dir(base_dir: str) -> str:
-    outputs_dir = os.path.join(base_dir, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
-    return outputs_dir
+    return get_outputs_dir()
 
 
 def _load_relation_json(path: str) -> Dict:

@@ -1,4 +1,5 @@
 import os
+from utils import get_outputs_dir
 from docx import Document
 from docx.shared import Pt, Cm
 from docx.oxml import OxmlElement
@@ -41,9 +42,7 @@ class WordExportMixin:
             element.set(qn('w:color'), '000000')
 
     def _export_stats_docx(self, composition_text, max_score, min_score, avg_score, counts, ratios):
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        output_dir = os.path.join(root, 'outputs')
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = get_outputs_dir()
         output_path = os.path.join(output_dir, '2.课程成绩统计表.docx')
 
         doc = Document()
@@ -143,9 +142,7 @@ class WordExportMixin:
 
     def _export_eval_result_docx(self, links, obj_keys, method_avgs, prev_data,
                                  total_attainment, expected_attainment, prev_total):
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        output_dir = os.path.join(root, 'outputs')
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = get_outputs_dir()
         output_path = os.path.join(
             output_dir,
             '5.基于考核结果的课程目标达成情况评价结果表.docx'

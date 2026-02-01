@@ -1,3 +1,5 @@
+import os
+import sys
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.cell import MergedCell
@@ -51,3 +53,15 @@ def adjust_column_widths(worksheet):
     # 设置列宽
     for col_letter, width in column_widths.items():
         worksheet.column_dimensions[col_letter].width = min(width, 50)  # 限制最大宽度为 50
+
+def get_app_root() -> str:
+    """Get application root directory for both source and frozen builds."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.dirname(__file__))
+
+def get_outputs_dir() -> str:
+    """Ensure outputs directory exists under app root."""
+    outputs_dir = os.path.join(get_app_root(), "outputs")
+    os.makedirs(outputs_dir, exist_ok=True)
+    return outputs_dir

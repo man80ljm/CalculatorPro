@@ -2,6 +2,7 @@ import json
 import os
 from typing import List, Tuple, Optional
 
+from utils import get_outputs_dir
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
@@ -36,9 +37,8 @@ except Exception:
 
 
 def _ensure_outputs_dir(base_dir: str) -> str:
-    outputs_dir = os.path.join(base_dir, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
-    return outputs_dir
+    del base_dir
+    return get_outputs_dir()
 
 
 def _format_percent(value: float) -> str:
@@ -709,7 +709,7 @@ class RelationTableEditorDialog(QDialog):
             QMessageBox.warning(self, "提示", "缺少 python-docx 依赖,无法生成 Word 文件")
             return
         methods_data, obj_totals, total_sum = self._collect_data()
-        outputs_dir = _ensure_outputs_dir(os.getcwd())
+        outputs_dir = _ensure_outputs_dir("")
         output_path = os.path.join(outputs_dir, "4.\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb\u8868.docx")
         json_path = os.path.join(outputs_dir, "\u8bfe\u7a0b\u8003\u6838\u4e0e\u8bfe\u7a0b\u76ee\u6807\u5bf9\u5e94\u5173\u7cfb\u8868.json")
         try:

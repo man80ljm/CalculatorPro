@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QButtonGroup, QCheckBox, QSizePolicy)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core import GradeProcessor
+from utils import get_app_root, get_outputs_dir
 from io_app.excel_templates import create_forward_template, create_reverse_template
 from relation_table import RelationTableSetupDialog, RelationTableEditorDialog
 from ui_app.settings_dialog import SettingsDialog
@@ -508,6 +509,15 @@ class GradeAnalysisApp(QMainWindow):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 22px; font-weight: bold; margin-bottom: 10px;")
         card_layout.addWidget(title)
+
+        # 分割线（标题与上方按钮区的分隔）
+        top_divider = QFrame()
+        top_divider.setFrameShape(QFrame.Shape.HLine)
+        top_divider.setFrameShadow(QFrame.Shadow.Plain)
+        top_divider.setStyleSheet("color: #BDBDBD;")
+        top_divider.setFixedHeight(2)
+        card_layout.addWidget(top_divider)
+
         top_btns_row1 = QHBoxLayout()
         top_btns_row2 = QHBoxLayout()
 
@@ -870,7 +880,7 @@ class GradeAnalysisApp(QMainWindow):
         if not dialog.exec():
             return
         count = dialog.student_count
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        base_dir = get_app_root()
         
         try:
             # ===== 正向模式 =====
@@ -882,8 +892,7 @@ class GradeAnalysisApp(QMainWindow):
                         '请先填写[课程考核与课程目标对应关系]。',
                     )
                     return
-                outputs_dir = os.path.join(base_dir, "outputs")
-                os.makedirs(outputs_dir, exist_ok=True)
+                outputs_dir = get_outputs_dir()
                 relation_json_path = os.path.join(outputs_dir, "relation_table.json")
                 with open(relation_json_path, "w", encoding="utf-8") as f:
                     json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
@@ -902,8 +911,7 @@ class GradeAnalysisApp(QMainWindow):
                     return
                 
                 # 保存关系表到文件
-                outputs_dir = os.path.join(base_dir, "outputs")
-                os.makedirs(outputs_dir, exist_ok=True)
+                outputs_dir = get_outputs_dir()
                 relation_json_path = os.path.join(outputs_dir, "relation_table.json")
                 with open(relation_json_path, "w", encoding="utf-8") as f:
                     json.dump(self.relation_payload, f, ensure_ascii=False, indent=2)
@@ -1175,9 +1183,9 @@ class GradeAnalysisApp(QMainWindow):
 
         output_report = ""
         try:
-            root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            root = get_app_root()
             template_path = os.path.join(root, "report_template.docx")
-            output_dir = os.path.join(root, "outputs")
+            output_dir = get_outputs_dir()
             if os.path.exists(template_path):
                 builder = ReportBuilder(template_path, output_dir)
                 output_report = builder.build(self.course_open_info, self.course_basic_info, {})
