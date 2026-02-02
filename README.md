@@ -47,9 +47,17 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 6. 点击“导出结果”生成报表
 
 ### 4) 生成 AI 报告（表6）
-- 在“设置”中填写 API Key
+- 在"设置"中选择 AI 模型（支持 DeepSeek 和 Claude）并填写对应的 API Key
 - 点击“生成报告”
 
+
+#### 支持的 AI 模型
+- **deepseek-chat**：DeepSeek 的对话模型
+- **claude-3-5-sonnet-20241022**：Claude 3.5 Sonnet（最新版本）
+- **claude-3-5-sonnet-20240620**：Claude 3.5 Sonnet（旧版本）
+- **claude-3-opus-20240229**：Claude 3 Opus
+- **claude-3-sonnet-20240229**：Claude 3 Sonnet
+- **claude-3-haiku-20240307**：Claude 3 Haiku
 ## 输出文件说明（outputs 目录）
 
 正向模式：
