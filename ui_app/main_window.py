@@ -330,6 +330,7 @@ class GradeAnalysisApp(QMainWindow):
         self.course_basic_info = {}
         self.grad_req_map = []
         self.api_key = ""
+        self.ai_model = "deepseek-chat"
         self.num_objectives = 0
         self.processor = None
         self.current_achievement = {}
@@ -356,6 +357,7 @@ class GradeAnalysisApp(QMainWindow):
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     self.api_key = config.get('api_key', '')
+                    self.ai_model = config.get('ai_model', 'deepseek-chat')
                     self.course_description = config.get('course_description', '')
                     self.objective_requirements = config.get('objective_requirements', [])
                     self.previous_achievement_file = config.get('previous_achievement_file', '')
@@ -387,6 +389,7 @@ class GradeAnalysisApp(QMainWindow):
         config_file = os.path.join(config_dir, 'config.json')
         config = {
             'api_key': self.api_key,
+            'ai_model': self.ai_model,
             'course_description': self.course_description,
             'objective_requirements': self.objective_requirements,
             'previous_achievement_file': self.previous_achievement_file,
@@ -784,6 +787,7 @@ class GradeAnalysisApp(QMainWindow):
         dialog = SettingsDialog(
         self,
         api_key=self.api_key,
+        ai_model=self.ai_model,
         description=self.course_description,
         objective_requirements=self.objective_requirements,
         objectives_count=self.num_objectives,
@@ -791,6 +795,7 @@ class GradeAnalysisApp(QMainWindow):
         )
         if dialog.exec():
             self.api_key = dialog.api_key_value
+            self.ai_model = dialog.ai_model_value
             self.course_description = dialog.description_value
             self.objective_requirements = dialog.objective_requirements
             self.previous_achievement_file = dialog.previous_achievement_file
@@ -958,7 +963,8 @@ class GradeAnalysisApp(QMainWindow):
                     file_name,
                     course_description=self.course_description,
                     objective_requirements=self.objective_requirements,
-                    relation_payload=self.relation_payload
+                    relation_payload=self.relation_payload,
+                    ai_model=self.ai_model
                 )
                 is_forward = False
                 is_reverse = False
@@ -1089,7 +1095,8 @@ class GradeAnalysisApp(QMainWindow):
                 self.input_file,
                 course_description=self.course_description,
                 objective_requirements=self.objective_requirements,
-                relation_payload=self.relation_payload
+                relation_payload=self.relation_payload,
+                ai_model=self.ai_model
             )
 
             try:
