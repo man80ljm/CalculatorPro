@@ -206,18 +206,29 @@ class SettingsDialog(QDialog):
         model_layout = QHBoxLayout()
         model_label = QLabel("AI 模型:")
         self.model_combo = QComboBox()
-        self.model_combo.addItems([
-            "deepseek-chat",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-sonnet-20240620",
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
-        ])
-        # Set current model
-        index = self.model_combo.findText(self.ai_model_value)
-        if index >= 0:
-            self.model_combo.setCurrentIndex(index)
+        
+        # Define model mappings: display name -> model ID
+        self.model_mapping = {
+            "DeepSeek Chat": "deepseek-chat",
+            "Claude 3.5 Sonnet (2024-10-22 最新版)": "claude-3-5-sonnet-20241022",
+            "Claude 3.5 Sonnet (2024-06-20)": "claude-3-5-sonnet-20240620",
+            "Claude 3 Opus": "claude-3-opus-20240229",
+            "Claude 3 Sonnet": "claude-3-sonnet-20240229",
+            "Claude 3 Haiku": "claude-3-haiku-20240307",
+        }
+        
+        # Add display names to combo box
+        for display_name in self.model_mapping.keys():
+            self.model_combo.addItem(display_name)
+        
+        # Set current model based on stored model ID
+        for display_name, model_id in self.model_mapping.items():
+            if model_id == self.ai_model_value:
+                index = self.model_combo.findText(display_name)
+                if index >= 0:
+                    self.model_combo.setCurrentIndex(index)
+                break
+        
         model_layout.addWidget(model_label)
         model_layout.addWidget(self.model_combo)
         layout.addLayout(model_layout)
@@ -289,7 +300,9 @@ class SettingsDialog(QDialog):
         if not api_key:
             QMessageBox.warning(self, "提示", "请先输入API Key")
             return
-        model = self.model_combo.currentText()
+        # Get model ID from display name
+        display_name = self.model_combo.currentText()
+        model = self.model_mapping.get(display_name, "deepseek-chat")
         self.test_dialog = QMessageBox(self)
         self.test_dialog.setWindowTitle("测试连接")
         self.test_dialog.setText("连接中...")
@@ -447,7 +460,9 @@ class SettingsDialog(QDialog):
             new_api = self.api_input.text().strip()
             if new_api:
                 self.api_key_value = new_api
-            self.ai_model_value = self.model_combo.currentText()
+            # Get model ID from display name
+            display_name = self.model_combo.currentText()
+            self.ai_model_value = self.model_mapping.get(display_name, "deepseek-chat")
             self.description_value = self.desc_input.toPlainText().strip()
             self.objective_requirements = [item.text().strip() for item in self.objective_inputs]
 
