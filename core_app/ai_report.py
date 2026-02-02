@@ -73,16 +73,13 @@ class AIReportMixin:
                 return error_message
 
         def call_deepseek_api(self, prompt: str) -> str:
-            """调用 DeepSeek API 获取答案，包含重试与超时处理。"""
+            """调用 AI API 获取答案，支持 DeepSeek 和 Anthropic Claude 模型。"""
             if not self.api_key:
                 return "请先设置API Key"
 
-            url = "https://api.deepseek.com/v1/chat/completions"
+            # 获取模型名称
+            model = getattr(self, 'ai_model', 'deepseek-chat')
             api_key = self.api_key.strip().strip("<").strip(">")
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
 
             max_tokens = 600
             match = re.search(r"接近(\d+)字", prompt)
@@ -93,41 +90,85 @@ class AIReportMixin:
                 except ValueError:
                     max_tokens = 600
 
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant specializing in course analysis and improvement."},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.7,
-                "top_p": 1,
-                "max_tokens": max_tokens,
-                "stream": False,
-            }
-
             max_retries = 3
-            for attempt in range(max_retries):
+            
+            # 使用 Anthropic Claude 模型
+            if model.startswith("claude"):
                 try:
-                    response = requests.post(url, headers=headers, json=payload, timeout=30)
-                    response.raise_for_status()
-                    return response.json()["choices"][0]["message"]["content"].strip()
-                except requests.Timeout:
-                    if attempt < max_retries - 1:
-                        print(f"API 调用超时，正在重试（第 {attempt + 1}/{max_retries} 次）...")
-                        time.sleep(2)
-                        continue
-                    return "API 调用超时，请检查网络连接或稍后重试（可能需要使用VPN或代理访问 api.deepseek.com）"
-                except requests.RequestException as e:
-                    error_message = f"API 调用失败: {str(e)}"
-                    if hasattr(e, "response") and e.response is not None:
-                        error_message += f"\n服务端返回: {e.response.text}"
-                    if attempt < max_retries - 1:
-                        print(f"API 调用失败，正在重试（第 {attempt + 1}/{max_retries} 次）...")
-                        time.sleep(2)
-                        continue
-                    return error_message
-                except (KeyError, IndexError):
-                    return "API 返回格式错误，无法解析结果"
+                    import anthropic
+                    client = anthropic.Anthropic(api_key=api_key)
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            message = client.messages.create(
+                                model=model,
+                                max_tokens=max_tokens,
+                                messages=[
+                                    {"role": "user", "content": prompt}
+                                ],
+                                system="You are a helpful assistant specializing in course analysis and improvement.",
+                            )
+                            return message.content[0].text.strip()
+                        except anthropic.APITimeoutError:
+                            if attempt < max_retries - 1:
+                                print(f"API 调用超时，正在重试（第 {attempt + 1}/{max_retries} 次）...")
+                                time.sleep(2)
+                                continue
+                            return "API 调用超时，请检查网络连接或稍后重试"
+                        except anthropic.APIError as e:
+                            error_message = f"API 调用失败: {str(e)}"
+                            if attempt < max_retries - 1:
+                                print(f"API 调用失败，正在重试（第 {attempt + 1}/{max_retries} 次）...")
+                                time.sleep(2)
+                                continue
+                            return error_message
+                except ImportError:
+                    return "错误：未安装 anthropic 库，请运行 pip install anthropic"
+                except Exception as e:
+                    return f"调用 Claude API 时出错: {str(e)}"
+            
+            # 使用 DeepSeek API
+            else:
+                url = "https://api.deepseek.com/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                }
+
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful assistant specializing in course analysis and improvement."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.7,
+                    "top_p": 1,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                }
+
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(url, headers=headers, json=payload, timeout=30)
+                        response.raise_for_status()
+                        return response.json()["choices"][0]["message"]["content"].strip()
+                    except requests.Timeout:
+                        if attempt < max_retries - 1:
+                            print(f"API 调用超时，正在重试（第 {attempt + 1}/{max_retries} 次）...")
+                            time.sleep(2)
+                            continue
+                        return "API 调用超时，请检查网络连接或稍后重试（可能需要使用VPN或代理访问 api.deepseek.com）"
+                    except requests.RequestException as e:
+                        error_message = f"API 调用失败: {str(e)}"
+                        if hasattr(e, "response") and e.response is not None:
+                            error_message += f"\n服务端返回: {e.response.text}"
+                        if attempt < max_retries - 1:
+                            print(f"API 调用失败，正在重试（第 {attempt + 1}/{max_retries} 次）...")
+                            time.sleep(2)
+                            continue
+                        return error_message
+                    except (KeyError, IndexError):
+                        return "API 返回格式错误，无法解析结果"
 
         def load_previous_achievement(self, file_path: str) -> None:
             """\u52a0\u8f7d\u4e0a\u4e00\u5b66\u5e74\u8fbe\u6210\u5ea6\u8868\uff0c\u63d0\u53d6\u5404\u8bfe\u7a0b\u76ee\u6807\u7684\u5206\u76ee\u6807\u8fbe\u6210\u503c\u4ee5\u53ca\u8bfe\u7a0b\u76ee\u6807\u8fbe\u6210\u503c\u3002"""

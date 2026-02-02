@@ -14,6 +14,7 @@ def load_config() -> Dict:
     if not os.path.exists(path):
         data = {
             "api_key": "",
+            "ai_model": "deepseek-chat",
             "course_description": "",
             "objective_requirements": [],
             "previous_achievement_file": "",
@@ -24,7 +25,11 @@ def load_config() -> Dict:
         save_config(data)
         return data
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        config = json.load(f)
+        # Add ai_model if it doesn't exist (for backward compatibility)
+        if "ai_model" not in config:
+            config["ai_model"] = "deepseek-chat"
+        return config
 
 
 def save_config(data: Dict) -> None:

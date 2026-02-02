@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QWidget,
     QVBoxLayout,
+    QComboBox,
 )
 from utils import get_outputs_dir
 
@@ -29,35 +30,60 @@ from utils import get_outputs_dir
 class TestApiThread(QThread):
     result = pyqtSignal(str)
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: str):
         super().__init__()
         self.api_key = api_key
+        self.model = model
 
     def run(self):
-        self.result.emit(test_deepseek_api(self.api_key))
+        self.result.emit(test_api(self.api_key, self.model))
+
+
+def test_api(api_key: str, model: str) -> str:
+    """测试 API 连接 - 支持 DeepSeek 和 Anthropic"""
+    api_key = api_key.strip().strip("<").strip(">")
+    
+    if model.startswith("claude"):
+        # Test Anthropic API
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model=model,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "测试连接"}]
+            )
+            return "连接成功"
+        except ImportError:
+            return "连接失败: 未安装 anthropic 库，请运行 pip install anthropic"
+        except Exception as exc:
+            return f"连接失败: {exc}"
+    else:
+        # Test DeepSeek API
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "测试连接"},
+            ],
+            "temperature": 0.7,
+            "top_p": 1,
+            "max_tokens": 10,
+            "stream": False,
+        }
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response.raise_for_status()
+            return "连接成功"
+        except requests.RequestException as exc:
+            return f"连接失败: {exc}"
 
 
 def test_deepseek_api(api_key: str) -> str:
-    url = "https://api.deepseek.com/v1/chat/completions"
-    api_key = api_key.strip().strip("<").strip(">")
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "测试连接"},
-        ],
-        "temperature": 0.7,
-        "top_p": 1,
-        "max_tokens": 10,
-        "stream": False,
-    }
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-        return "连接成功"
-    except requests.RequestException as exc:
-        return f"连接失败: {exc}"
+    """向后兼容的 DeepSeek 测试函数"""
+    return test_api(api_key, "deepseek-chat")
 
 
 class SettingsDialog(QDialog):
@@ -67,6 +93,7 @@ class SettingsDialog(QDialog):
         self,
         parent=None,
         api_key="",
+        ai_model="deepseek-chat",
         description="",
         objective_requirements=None,
         objectives_count=0,
@@ -79,6 +106,7 @@ class SettingsDialog(QDialog):
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "..", "calculator.ico")))
 
         self.api_key_value = api_key
+        self.ai_model_value = ai_model
         self.description_value = description
         self.objective_requirements = objective_requirements or []
         self.objectives_count = objectives_count
@@ -174,11 +202,31 @@ class SettingsDialog(QDialog):
         self.file_path_label = QLabel(self.previous_achievement_file or "未选择文件")
         layout.addWidget(self.file_path_label)
 
+        # AI Model selection
+        model_layout = QHBoxLayout()
+        model_label = QLabel("AI 模型:")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems([
+            "deepseek-chat",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+        ])
+        # Set current model
+        index = self.model_combo.findText(self.ai_model_value)
+        if index >= 0:
+            self.model_combo.setCurrentIndex(index)
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_combo)
+        layout.addLayout(model_layout)
+
         api_layout = QHBoxLayout()
         api_label = QLabel("API KEY:")
         self.api_input = QLineEdit()
         self.api_input.setText(self.api_key_value)
-        self.api_input.setPlaceholderText("请输入 DeepSeek API Key")
+        self.api_input.setPlaceholderText("请输入 API Key (DeepSeek 或 Anthropic)")
         self.test_btn = QPushButton("检测")
         self.test_btn.clicked.connect(self._test_api)
         api_layout.addWidget(api_label)
@@ -241,12 +289,13 @@ class SettingsDialog(QDialog):
         if not api_key:
             QMessageBox.warning(self, "提示", "请先输入API Key")
             return
+        model = self.model_combo.currentText()
         self.test_dialog = QMessageBox(self)
         self.test_dialog.setWindowTitle("测试连接")
         self.test_dialog.setText("连接中...")
         self.test_dialog.setStandardButtons(QMessageBox.StandardButton.NoButton)
         self.test_dialog.show()
-        self.test_thread = TestApiThread(api_key)
+        self.test_thread = TestApiThread(api_key, model)
         self.test_thread.result.connect(self._on_test_result)
         self.test_thread.start()
 
@@ -398,6 +447,7 @@ class SettingsDialog(QDialog):
             new_api = self.api_input.text().strip()
             if new_api:
                 self.api_key_value = new_api
+            self.ai_model_value = self.model_combo.currentText()
             self.description_value = self.desc_input.toPlainText().strip()
             self.objective_requirements = [item.text().strip() for item in self.objective_inputs]
 
@@ -405,6 +455,7 @@ class SettingsDialog(QDialog):
             export_error = None
             if parent:
                 parent.api_key = self.api_key_value
+                parent.ai_model = self.ai_model_value
                 parent.course_description = self.description_value
                 parent.objective_requirements = self.objective_requirements
                 parent.previous_achievement_file = self.previous_achievement_file

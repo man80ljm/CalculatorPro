@@ -15,3 +15,6 @@ docxtpl>=0.16.0
 
 # 网络请求 (用于 DeepSeek API 调用)
 requests>=2.28.0
+
+# AI API 支持
+anthropic>=0.39.0
