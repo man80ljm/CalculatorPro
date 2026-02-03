@@ -40,17 +40,42 @@ class GradeReverseEngine:
         score = np.random.triangular(left=low, mode=mode, right=high)
         return self._clamp(score)
 
-    def dist_bimodal(self, low_peak: float = 60, high_peak: float = 90, ratio: float = 0.5, scale: float = 5.0) -> float:
-        """双峰分布 (两极分化)"""
+    def dist_bimodal(self, target_mean: float = 75, low_peak: float = None, high_peak: float = None, ratio: float = 0.5, scale: float = 5.0) -> float:
+        """
+        双峰分布 (两极分化)
+        :param target_mean: 目标均值，用于动态计算双峰位置
+        :param low_peak: 低峰位置（可选，默认根据target_mean计算）
+        :param high_peak: 高峰位置（可选，默认根据target_mean计算）
+        """
+        # 根据目标均值动态计算双峰位置
+        if low_peak is None:
+            low_peak = max(0, target_mean - 15)
+        if high_peak is None:
+            high_peak = min(100, target_mean + 15)
+        
         if random.random() < ratio:
             score = np.random.normal(loc=high_peak, scale=scale)
         else:
             score = np.random.normal(loc=low_peak, scale=scale)
         return self._clamp(score)
 
-    def dist_discrete(self, levels: List[int] = [60, 70, 80, 85, 90, 95]) -> float:
-        """离散档位分布"""
-        score = np.random.choice(levels)
+    def dist_discrete(self, target_mean: float = 75, levels: List[int] = None) -> float:
+        """
+        离散档位分布
+        :param target_mean: 目标均值，用于筛选合适的档位
+        :param levels: 可选的档位列表
+        """
+        if levels is None:
+            levels = [60, 70, 80, 85, 90, 95]
+        
+        # 筛选出与目标均值接近的档位（±15分范围内）
+        valid_levels = [lv for lv in levels if abs(lv - target_mean) <= 15]
+        
+        # 如果没有合适的档位，使用所有档位中最接近的
+        if not valid_levels:
+            valid_levels = [min(levels, key=lambda x: abs(x - target_mean))]
+        
+        score = np.random.choice(valid_levels)
         return float(score)
 
     # ==========================================
@@ -158,10 +183,17 @@ class GradeReverseEngine:
                 'allowed_items': []
             }
 
+        # ===== 极端分数直接返回（用户无感知） =====
+        # 极低分(0-2)或极高分(98-100)直接让所有分项等于总分，避免分布计算导致的偏差
+        if student_total_score <= 2:
+            return {name: round(student_total_score, 1) for name in structure.keys()}
+        if student_total_score >= 98:
+            return {name: round(student_total_score, 1) for name in structure.keys()}
+
         # ===== 100分限制（用户无感知） =====
-        # 如果原始总分不是100，推算出的方法分数最高只能是99
+        # 如果原始总分不是99或100，推算出的方法分数最高只能是99
         # 防止出现"总分90，但某个方法100分"的不合理情况
-        if student_total_score >= 100:
+        if student_total_score >= 99:
             max_allowed_score = 100.0
         else:
             max_allowed_score = 99.0
@@ -178,13 +210,13 @@ class GradeReverseEngine:
                 actual_spread_mode = 'medium'
         
         # 低分保护：防止低于0被clamp
-        elif student_total_score <= 10:
+        elif student_total_score <= 5:
             actual_spread_mode = 'small'
-        elif student_total_score <= 20:
+        elif student_total_score <= 15:
             if spread_mode == 'large':
                 actual_spread_mode = 'medium'
         
-        # 中间分数（20-90）保持用户选择的跨度
+        # 中间分数（15-90）保持用户选择的跨度
 
         # 根据 spread_mode 获取分布参数
         scale = self._get_scale_from_spread_mode(actual_spread_mode)
@@ -205,17 +237,20 @@ class GradeReverseEngine:
             elif dist_type == 'right_skewed':
                 draft_scores[name] = self.dist_right_skewed(student_total_score, strength=strength)
             elif dist_type == 'bimodal':
-                draft_scores[name] = self.dist_bimodal(scale=scale)
+                draft_scores[name] = self.dist_bimodal(target_mean=student_total_score, scale=scale)
             elif dist_type == 'discrete':
-                levels = config.get('levels', [70, 80, 85, 90, 95])
-                draft_scores[name] = self.dist_discrete(levels=levels)
+                levels = config.get('levels', None)
+                draft_scores[name] = self.dist_discrete(target_mean=student_total_score, levels=levels)
             else: # normal
                 draft_scores[name] = self.dist_normal(student_total_score, scale=scale)
 
         # 第二步：注入智能噪声 (调用上面的 apply_advanced_noise)
-        # 如果 allowed_items 为空，默认所有科目都可注入（除非明确指定）
-        allowed = noise_config.get('allowed_items', list(draft_scores.keys()))
-        if not allowed: allowed = list(draft_scores.keys())
+        # 如果 allowed_items 未提供（None），默认所有科目都可注入
+        # 如果 allowed_items 为空列表[]，表示用户明确不想注入任何科目
+        allowed = noise_config.get('allowed_items')
+        if allowed is None:
+            allowed = list(draft_scores.keys())
+        # 如果 allowed 是空列表，保持为空，不注入任何噪声
 
         # ===== 高分跳过噪声注入（用户无感知） =====
         # 高分学生注入噪声会导致其他方法需要超过100才能补回来，不合理
@@ -249,12 +284,27 @@ class GradeReverseEngine:
         final_scores[anchor_name] += final_diff / anchor_weight
         final_scores[anchor_name] = self._clamp(final_scores[anchor_name], max_allowed_score)
         
-        # ===== 验证总分一致性（调试用） =====
+        # ===== 验证总分一致性并强制修正 =====
         calculated_total = sum(final_scores[k] * structure[k]['weight'] for k in final_scores)
         deviation = abs(calculated_total - student_total_score)
+        
+        # 偏差超过0.5分时，启用强制均匀分配策略
         if deviation > 0.5:
-            # 偏差超过0.5分时打印警告（仅开发调试用）
-            print(f"[逆向推分警告] 目标={student_total_score:.1f}, 实际={calculated_total:.1f}, 偏差={deviation:.2f}")
+            # 尝试二次锚点修正（使用第二大权重的项）
+            if len(sorted_items) > 1:
+                second_anchor_name = sorted_items[1][0]
+                second_anchor_weight = sorted_items[1][1]['weight']
+                remaining_diff = student_total_score - calculated_total
+                final_scores[second_anchor_name] += remaining_diff / second_anchor_weight
+                final_scores[second_anchor_name] = self._clamp(final_scores[second_anchor_name], max_allowed_score)
+            
+            # 再次验证
+            calculated_total = sum(final_scores[k] * structure[k]['weight'] for k in final_scores)
+            deviation = abs(calculated_total - student_total_score)
+            
+            # 如果仍有较大偏差，强制所有分项等于总分（保底策略）
+            if deviation > 1.0:
+                return {name: round(student_total_score, 1) for name in structure.keys()}
         
         return {k: round(v, 1) for k, v in final_scores.items()}
 
