@@ -1,8 +1,6 @@
 ﻿import sys
 import os
 import json
-import pandas as pd
-from openpyxl import load_workbook
 from PyQt6.QtGui import QIcon, QDoubleValidator, QIntValidator
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -11,15 +9,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QTabWidget, QFrame, QGroupBox, QSlider, QRadioButton,
                             QButtonGroup, QCheckBox, QSizePolicy)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from core import GradeProcessor
 from utils import get_app_root, get_outputs_dir, get_resource_path
-from io_app.excel_templates import create_forward_template, create_reverse_template
-from relation_table import RelationTableSetupDialog, RelationTableEditorDialog
 from ui_app.settings_dialog import SettingsDialog
 from ui_app.course_open_dialog import CourseOpenDialog
 from ui_app.course_basic_dialog import CourseBasicDialog
 from ui_app.grad_req_dialog import GradRequirementDialog
-from core_app.report_builder import ReportBuilder
 
 # ==========================================
 # 工具类：适配旧核心逻辑的 Mock 输入
@@ -840,6 +834,7 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_relation_table(self):
         """打开课程目标对应关系编辑器"""    
+        from relation_table import RelationTableSetupDialog, RelationTableEditorDialog
         if self.usual_ratio in ("", None) or self.midterm_ratio in ("", None) or self.final_ratio in ("", None):
              QMessageBox.warning(self, '提示', '请先在“成绩占比”中设置比例')
              return
@@ -876,6 +871,7 @@ class GradeAnalysisApp(QMainWindow):
 
     def open_template_download(self):
         """下载模板并保存到 outputs 目录"""
+        from io_app.excel_templates import create_forward_template, create_reverse_template
         dialog = TemplateDownloadDialog(self)
         if not dialog.exec():
             return
@@ -933,6 +929,8 @@ class GradeAnalysisApp(QMainWindow):
 
     def select_file(self):
         """选择 Excel 成绩单"""
+        from core import GradeProcessor
+        import pandas as pd
         file_name, _ = QFileDialog.getOpenFileName(self, "选择成绩单文件", "", "Excel Files (*.xlsx)")
         if file_name:
             # 先用模板结构特征判断类型，避免被关系表不一致误判
@@ -1000,6 +998,7 @@ class GradeAnalysisApp(QMainWindow):
     def _detect_template_type(self, file_path: str) -> str:
         """根据表头结构判断模板类型：forward / reverse / unknown"""
         try:
+            from openpyxl import load_workbook
             wb = load_workbook(file_path, data_only=True)
             ws = wb.active
             max_col = ws.max_column
@@ -1035,6 +1034,8 @@ class GradeAnalysisApp(QMainWindow):
         if not self.input_file:
             QMessageBox.warning(self, '错误', '请先选择成绩单文件')
             return
+
+        from core import GradeProcessor
 
         # 导出前复验模板类型，避免导入后切换模式造成误处理
         template_type = self._detect_template_type(self.input_file)
@@ -1183,6 +1184,7 @@ class GradeAnalysisApp(QMainWindow):
 
         output_report = ""
         try:
+            from core_app.report_builder import ReportBuilder
             template_path = get_resource_path("report_template.docx")
             output_dir = get_outputs_dir()
             if os.path.exists(template_path):
