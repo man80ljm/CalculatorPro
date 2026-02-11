@@ -26,7 +26,7 @@ from core_app.excel_calc import ExcelCalcMixin
 class GradeProcessor(AIReportMixin, WordExportMixin, ExcelCalcMixin):
         def __init__(self, course_name_input, num_objectives_input, weight_inputs, usual_ratio_input,
                      midterm_ratio_input, final_ratio_input, status_label, input_file,
-                     course_description="", objective_requirements=None, relation_payload=None):
+                     course_description="", objective_requirements=None, relation_payload=None, ai_model="deepseek-chat"):
             self.course_name_input = course_name_input
             self.num_objectives_input = num_objectives_input
             self.weight_inputs = weight_inputs
@@ -39,6 +39,7 @@ class GradeProcessor(AIReportMixin, WordExportMixin, ExcelCalcMixin):
             self.objective_requirements = objective_requirements or []
             self.previous_achievement_data = None
             self.api_key = None
+            self.ai_model = ai_model
             self.relation_payload = relation_payload or {}
             self.noise_config = None
             self.reverse_engine = GradeReverseEngine()
