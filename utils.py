@@ -1,8 +1,19 @@
+import contextvars
 import os
 import sys
+from contextlib import contextmanager
+
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.cell import MergedCell
+
+# Per-task output directory. The desktop app leaves this unset and keeps using
+# the shared outputs/ folder. The web service sets it so each request writes
+# into its own temporary directory.
+_outputs_override: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "calculatorpro_outputs_dir",
+    default=None,
+)
 
 def normalize_score(score: float) -> float:
     """Normalize score to 0-100 range."""
@@ -61,10 +72,29 @@ def get_app_root() -> str:
     return os.path.abspath(os.path.dirname(__file__))
 
 def get_outputs_dir() -> str:
-    """Ensure outputs directory exists under app root."""
+    """Ensure outputs directory exists under app root.
+
+    When ``override_outputs_dir`` is active, that directory is used instead so
+    concurrent web requests do not share one outputs folder.
+    """
+    override = _outputs_override.get()
+    if override:
+        os.makedirs(override, exist_ok=True)
+        return override
     outputs_dir = os.path.join(get_app_root(), "outputs")
     os.makedirs(outputs_dir, exist_ok=True)
     return outputs_dir
+
+
+@contextmanager
+def override_outputs_dir(path: str):
+    """Temporarily send all ``get_outputs_dir()`` writes to ``path``."""
+    os.makedirs(path, exist_ok=True)
+    token = _outputs_override.set(os.path.abspath(path))
+    try:
+        yield path
+    finally:
+        _outputs_override.reset(token)
 
 def get_resource_path(relative_path: str) -> str:
     """Get resource path for both source and PyInstaller builds."""

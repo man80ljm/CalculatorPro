@@ -1,0 +1,15 @@
+# 网页版依赖。桌面端仍使用 requirements.txt，这里不安装 PyQt6。
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+python-docx>=0.8.11
+docxtpl>=0.16.0
+requests>=2.28.0
+fastapi>=0.115.0
+uvicorn>=0.32.0
+python-multipart>=0.0.12
+itsdangerous>=2.1.0
+sqlalchemy>=2.0.0
+psycopg[binary]>=3.1.0
+argon2-cffi>=23.1.0
