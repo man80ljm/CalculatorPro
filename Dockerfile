@@ -8,7 +8,9 @@ WORKDIR /app
 
 COPY requirements-web.txt .
 RUN pip install --no-cache-dir -r requirements-web.txt \
-    && useradd --create-home --uid 10001 appuser
+    && useradd --create-home --uid 10001 appuser \
+    && mkdir -p /data/uploads \
+    && chown -R appuser:appuser /data/uploads
 
 COPY . .
 RUN chown -R appuser:appuser /app

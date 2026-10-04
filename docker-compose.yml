@@ -1,3 +1,4 @@
+# 上传目录需让容器用户可写：sudo chown -R 10001:10001 /data/uploads/calculatorpro
 services:
   calculatorpro-web:
     build: .
@@ -7,9 +8,32 @@ services:
       - .env
     mem_limit: 1g
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - /data/uploads/calculatorpro:/data/uploads
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    mem_limit: 512m
+    restart: unless-stopped
+    # 只把数据库需要的变量传给 postgres，不传 SECRET_KEY / DEEPSEEK_API_KEY
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - /data/databases/calculatorpro/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s

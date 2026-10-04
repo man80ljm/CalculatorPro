@@ -27,7 +27,7 @@
       font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
     }
     main {
-      width: min(420px, calc(100% - 32px));
+      width: min(440px, calc(100% - 32px));
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 18px;
@@ -42,8 +42,8 @@
       color: var(--accent);
     }
     h1 { margin: 0 0 8px; font-size: 28px; font-weight: 650; }
-    .lead { margin: 0 0 22px; color: var(--muted); line-height: 1.6; }
-    label { display: block; font-size: 14px; margin-bottom: 8px; }
+    .lead { margin: 0 0 18px; color: var(--muted); line-height: 1.6; }
+    label { display: block; font-size: 14px; margin: 12px 0 8px; }
     input {
       width: 100%;
       border: 1px solid var(--line);
@@ -66,44 +66,104 @@
       padding: 12px 16px;
       cursor: pointer;
     }
+    button.ghost {
+      background: transparent;
+      color: var(--accent);
+      margin-top: 8px;
+    }
     button:disabled { opacity: 0.6; cursor: progress; }
     .error { min-height: 1.4em; margin: 12px 0 0; color: var(--danger); font-size: 14px; }
+    .hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
   </style>
 </head>
 <body>
   <main>
     <p class="kicker">CalculatorPro</p>
     <h1>课程目标达成度</h1>
-    <p class="lead">请输入教研室共用密码。课程信息和成绩不会留在服务器上。</p>
-    <form id="form">
-      <label for="password">访问密码</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">进入</button>
-      <p class="error" id="error" role="alert"></p>
+    <p class="lead">使用教师账号登录。课程文件夹保存在服务器上，换一台电脑也能继续。</p>
+    <form id="loginForm">
+      <label for="loginUser">用户名或邮箱</label>
+      <input id="loginUser" name="username" type="text" autocomplete="username" required>
+      <label for="loginPassword">密码</label>
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">登录</button>
+      <button class="ghost" id="showRegister" type="button">注册账号</button>
+      <p class="error" id="loginError" role="alert"></p>
+    </form>
+    <form id="registerForm" hidden>
+      <label for="registerUser">用户名或邮箱</label>
+      <input id="registerUser" name="username" type="text" autocomplete="username" required>
+      <label for="registerPassword">密码</label>
+      <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required>
+      <p class="hint">密码至少 8 位。注册后即可登录，不需要邀请码。</p>
+      <button type="submit">注册</button>
+      <button class="ghost" id="showLogin" type="button">返回登录</button>
+      <p class="error" id="registerError" role="alert"></p>
     </form>
   </main>
   <script>
-    const form = document.getElementById("form");
-    const error = document.getElementById("error");
-    form.addEventListener("submit", async (event) => {
+    const loginForm = document.getElementById("loginForm");
+    const registerForm = document.getElementById("registerForm");
+    document.getElementById("showRegister").addEventListener("click", () => {
+      loginForm.hidden = true;
+      registerForm.hidden = false;
+    });
+    document.getElementById("showLogin").addEventListener("click", () => {
+      registerForm.hidden = true;
+      loginForm.hidden = false;
+    });
+    if (location.hash === "#register") {
+      loginForm.hidden = true;
+      registerForm.hidden = false;
+    }
+
+    async function submitAuth(url, username, password, errorNode) {
+      errorNode.textContent = "";
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        errorNode.textContent = typeof data.detail === "string" ? data.detail : "请求失败";
+        return false;
+      }
+      return true;
+    }
+
+    loginForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      error.textContent = "";
-      const button = form.querySelector("button");
+      const button = loginForm.querySelector("button[type=submit]");
       button.disabled = true;
       try {
-        const response = await fetch("/api/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: document.getElementById("password").value }),
-        });
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          error.textContent = typeof data.detail === "string" ? data.detail : "登录失败";
-          return;
-        }
-        location.href = "/";
+        const ok = await submitAuth(
+          "/api/login",
+          document.getElementById("loginUser").value,
+          document.getElementById("loginPassword").value,
+          document.getElementById("loginError")
+        );
+        if (ok) location.href = "/";
       } catch (err) {
-        error.textContent = "无法连接服务器";
+        document.getElementById("loginError").textContent = "无法连接服务器";
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    registerForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = registerForm.querySelector("button[type=submit]");
+      button.disabled = true;
+      const username = document.getElementById("registerUser").value;
+      const password = document.getElementById("registerPassword").value;
+      try {
+        const created = await submitAuth("/api/register", username, password, document.getElementById("registerError"));
+        if (!created) return;
+        const ok = await submitAuth("/api/login", username, password, document.getElementById("registerError"));
+        if (ok) location.href = "/";
+      } catch (err) {
+        document.getElementById("registerError").textContent = "无法连接服务器";
       } finally {
         button.disabled = false;
       }

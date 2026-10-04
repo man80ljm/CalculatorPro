@@ -33,6 +33,7 @@ outputs/
 
 # Web secrets
 .env
+backups/
 
 **/计算规则.docx
 **/课程目标达成情况评价表.docx

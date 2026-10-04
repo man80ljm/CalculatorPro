@@ -284,6 +284,14 @@ def _output_names(directory: str) -> list[str]:
     )
 
 
+def _capture_outputs(directory: str) -> list[tuple[str, bytes]]:
+    captured = []
+    for name in _output_names(directory):
+        with open(os.path.join(directory, name), "rb") as handle:
+            captured.append((name, handle.read()))
+    return captured
+
+
 def _open_info_for_report(settings: dict) -> dict:
     info = dict(settings.get("course_open_info") or {})
     if not info.get("term"):
@@ -342,7 +350,7 @@ def build_template(settings: dict) -> tuple[str, bytes]:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def run_calculation(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict) -> dict:
+def run_calculation(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, captured: list | None = None) -> dict:
     work_dir, outputs_dir, input_path, previous_path, payload, settings = _prepare_workspace(
         excel_bytes, previous_bytes, settings
     )
@@ -353,6 +361,8 @@ def run_calculation(excel_bytes: bytes, previous_bytes: bytes | None, settings: 
             _load_previous(processor, previous_path)
             _write_supporting_docs(settings, payload)
             average, achievement = _run_grades(processor, settings)
+            if captured is not None:
+                captured.extend(_capture_outputs(outputs_dir))
             return {
                 "mode": settings.get("mode") or "forward",
                 "course_name": _course_name(settings),
@@ -365,7 +375,7 @@ def run_calculation(excel_bytes: bytes, previous_bytes: bytes | None, settings: 
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def run_export(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict) -> tuple[str, bytes, dict]:
+def run_export(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, captured: list | None = None) -> tuple[str, bytes, dict]:
     work_dir, outputs_dir, input_path, previous_path, payload, settings = _prepare_workspace(
         excel_bytes, previous_bytes, settings
     )
@@ -384,13 +394,17 @@ def run_export(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict)
                 "achievement": achievement,
                 "files": _output_names(outputs_dir),
             }
+            if captured is not None:
+                captured.extend(_capture_outputs(outputs_dir))
             filename = f"{_course_name(settings)}统计表.zip"
             return filename, _zip_outputs(outputs_dir), summary
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def run_ai_report(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict) -> tuple[str, bytes]:
+def run_ai_report(
+    excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, captured: list | None = None
+) -> tuple[str, bytes]:
     api_key = deepseek_api_key()
     if not api_key:
         raise ServiceError(AI_DISABLED_MESSAGE)
@@ -425,6 +439,8 @@ def run_ai_report(excel_bytes: bytes, previous_bytes: bytes | None, settings: di
                 basic,
                 {},
             )
+            if captured is not None:
+                captured.extend(_capture_outputs(outputs_dir))
             filename = f"{_course_name(settings)}AI分析报告.zip"
             return filename, _zip_outputs(outputs_dir)
     finally:

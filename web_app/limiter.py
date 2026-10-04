@@ -1,4 +1,4 @@
-"""很小的内存限流，只用于登录和 AI 接口。"""
+"""很小的内存限流：登录（按 IP 和用户名）、注册（按 IP）和 AI 接口。"""
 import threading
 import time
 from collections import defaultdict
@@ -28,4 +28,21 @@ class RateLimiter:
 
 
 login_limiter = RateLimiter(max_calls=8, window_seconds=60)
+login_user_limiter = RateLimiter(max_calls=8, window_seconds=60)
+register_limiter = RateLimiter(max_calls=8, window_seconds=60)
 ai_limiter = RateLimiter(max_calls=6, window_seconds=60)
+
+
+def allow_login(ip: str, username: str) -> bool:
+    """同一次尝试同时计入 IP 和用户名，任一超限都拒绝。"""
+    user_key = (username or "").strip().casefold() or "-"
+    ip_ok = login_limiter.allow(f"ip:{ip or 'unknown'}")
+    user_ok = login_user_limiter.allow(f"user:{user_key}")
+    return ip_ok and user_ok
+
+
+def reset_limiters() -> None:
+    login_limiter.reset()
+    login_user_limiter.reset()
+    register_limiter.reset()
+    ai_limiter.reset()
