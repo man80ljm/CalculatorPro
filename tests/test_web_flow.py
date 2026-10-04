@@ -600,12 +600,19 @@ def test_database_url_required_unless_sqlite_opt_in(monkeypatch, tmp_path):
     assert database_url().startswith("postgresql+psycopg://")
 
 
-def test_home_sections_are_collapsible_panels(client):
+def test_home_mirrors_desktop_buttons_and_dialogs(client):
     page = client.get("/").text
-    for key in ["open", "basic", "relation", "grad", "intro", "run", "result", "files"]:
-        assert f'data-panel="{key}"' in page
-        assert f'data-sum="{key}"' in page
-    assert page.count('<details class="panel"') == 8
-    assert 'id="resultView"' in page and 'id="filesMore"' in page
+    # 桌面版主窗口的六个按钮，顺序一致
+    names = ["开课信息", "课程基本信息", "成绩占比", "课程考核与课程目标对应关系", "课程目标与毕业要求的对应关系", "设置"]
+    positions = [page.index(f'<span class="tb-name">{name}</span>') for name in names]
+    assert positions == sorted(positions)
+    for key in ["open", "basic", "ratio", "relation", "grad", "settings"]:
+        assert f'data-status="{key}"' in page
+    for dialog in ["dlgOpen", "dlgBasic", "dlgRatio", "dlgRelation", "dlgGrad", "dlgSettings", "dlgNoise", "dlgTemplate", "dlgResult", "dlgFiles"]:
+        assert f'<dialog class="dlg' in page and f'id="{dialog}"' in page
+    for action in ["模板下载", "导入文件", "计算达成度", "导出结果", "生成报告"]:
+        assert action in page
+    assert 'id="resultCard"' in page and 'id="relationGrid"' in page
+    assert "<details" not in page
     script = client.get("/static/app.js").text
-    assert "calculatorpro.panels." in script and "localStorage" in script
+    assert "showModal" in script and "有未保存的修改" in script

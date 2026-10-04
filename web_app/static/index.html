@@ -35,15 +35,7 @@
       </div>
       <p class="hint" id="passwordMsg"></p>
     </section>
-    <p class="banner" id="aiBanner">正在检查 AI 报告是否可用…</p>
     <section style="margin-top:16px">
-      <div class="course-head">
-        <h2>课程文件夹</h2>
-        <div class="row-actions">
-          <button type="button" class="ghost small" id="expandAllBtn">全部展开</button>
-          <button type="button" class="ghost small" id="collapseAllBtn">全部收起</button>
-        </div>
-      </div>
       <div class="course-bar">
         <label class="field">已有课程
           <select id="courseSelect"></select>
@@ -59,28 +51,93 @@
       </div>
       <p class="hint">每个课程单独保存开课信息、占比、对应关系表、成绩表和导出文件。保存后可以在其他电脑登录查看。</p>
     </section>
-    <div class="panels">
-    <details class="panel" data-panel="open">
-      <summary><span class="panel-num">1</span><span class="panel-title">开课信息</span><span class="panel-sum" data-sum="open"></span></summary>
-      <div class="panel-body">
+
+    <section class="main-card" style="margin-top:16px">
+      <h2 class="main-title">课程目标达成情况评价及总结分析报告</h2>
+      <div class="top-buttons">
+        <button type="button" class="top-btn" data-open="dlgOpen"><span class="tb-name">开课信息</span><span class="tb-status" data-status="open"></span></button>
+        <button type="button" class="top-btn" data-open="dlgBasic"><span class="tb-name">课程基本信息</span><span class="tb-status" data-status="basic"></span></button>
+        <button type="button" class="top-btn" data-open="dlgRatio"><span class="tb-name">成绩占比</span><span class="tb-status" data-status="ratio"></span></button>
+        <button type="button" class="top-btn" data-open="dlgRelation"><span class="tb-name">课程考核与课程目标对应关系</span><span class="tb-status" data-status="relation"></span></button>
+        <button type="button" class="top-btn" data-open="dlgGrad"><span class="tb-name">课程目标与毕业要求的对应关系</span><span class="tb-status" data-status="grad"></span></button>
+        <button type="button" class="top-btn" data-open="dlgSettings"><span class="tb-name">设置</span><span class="tb-status" data-status="settings"></span></button>
+      </div>
+
+      <div class="tabs" role="group" aria-label="计算模式">
+        <button type="button" id="modeForward" aria-pressed="true">正向模式</button>
+        <button type="button" class="secondary" id="modeReverse" aria-pressed="false">逆向模式</button>
+      </div>
+      <div class="tab-panel">
+        <div class="control-bar">
+          <label>分数跨度 <select id="spreadMode"></select></label>
+          <label>分布模式 <select id="distribution"></select></label>
+          <label>噪声注入 <button type="button" class="ghost small" id="noiseBtn" data-open="dlgNoise">无</button></label>
+          <label>报告风格 <select id="reportStyle"></select></label>
+          <label>字数 <input id="wordLimit" type="number" min="50" max="800" step="10"></label>
+        </div>
+        <div class="action-row">
+          <button type="button" class="action-btn" data-open="dlgTemplate">模板下载</button>
+          <label class="action-btn file-btn">导入文件<span class="tb-status" id="fileName">未导入</span>
+            <input id="gradeFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          </label>
+          <button type="button" class="action-btn" id="calcBtn">计算达成度</button>
+          <button type="button" class="action-btn secondary" id="exportBtn">导出结果</button>
+          <button type="button" class="action-btn secondary" id="aiBtn">生成报告</button>
+        </div>
+      </div>
+
+      <div class="result-card" id="resultCard"></div>
+    </section>
+    <div id="result" role="status" aria-live="polite"></div>
+
+    <dialog class="dlg" id="dlgOpen" aria-labelledby="dlgOpenTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgOpenTitle">开课信息</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <div class="fields" id="openFields"></div>
-      </div>
-    </details>
-    <details class="panel" data-panel="basic">
-      <summary><span class="panel-num">2</span><span class="panel-title">课程基本信息</span><span class="panel-sum" data-sum="basic"></span></summary>
-      <div class="panel-body">
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgBasic" aria-labelledby="dlgBasicTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgBasicTitle">课程基本信息</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <div class="fields" id="basicFields"></div>
-      </div>
-    </details>
-    <details class="panel" data-panel="relation">
-      <summary><span class="panel-num">3</span><span class="panel-title">课程考核与课程目标对应关系</span><span class="panel-sum" data-sum="relation"></span></summary>
-      <div class="panel-body">
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgRatio" aria-labelledby="dlgRatioTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgRatioTitle">成绩占比</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <p class="hint">设置平时、期中、期末三项占比，三项之和必须等于 1.0。保存后写入“课程考核与课程目标对应关系”表的占比列。</p>
+          <div class="fields" id="ratioFields"></div>
+          <p class="hint ratio-note" id="ratioDlgSum"></p>
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg dlg-wide" id="dlgRelation" aria-labelledby="dlgRelationTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgRelationTitle">课程考核与课程目标对应关系</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <div class="fields">
             <label class="field">课程目标数量
               <input id="objCount" type="number" min="1" max="8" step="1">
             </label>
           </div>
-          <p class="hint">直接在格子里改，或从 Excel 复制后点中起始格再粘贴（制表符分列，换行分行）。选中行后可以删除。占比为 0 的环节不参与计算。同一环节内各考核方式的目标权重合计应为 100。小计自动计算。</p>
+          <p class="hint">直接在格子里改，或从 Excel 复制后点中起始格再粘贴（制表符分列、换行分行，单元格内 Alt+Enter 换行会保留）。选中行后可以删除。占比为 0 的环节不参与计算。同一环节内各考核方式的目标权重合计应为 100。小计自动计算。</p>
           <div class="row-actions" style="margin:10px 0">
             <button type="button" class="secondary" id="addRowBtn">添加行</button>
             <button type="button" class="secondary" id="removeRowsBtn">删除选中行</button>
@@ -89,53 +146,59 @@
             <table class="sheet" id="relationGrid"></table>
           </div>
           <p class="hint ratio-note" id="ratioSum"></p>
-      </div>
-    </details>
-    <details class="panel" data-panel="grad">
-      <summary><span class="panel-num">4</span><span class="panel-title">课程目标与毕业要求</span><span class="panel-sum" data-sum="grad"></span></summary>
-      <div class="panel-body">
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgGrad" aria-labelledby="dlgGradTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgGradTitle">课程目标与毕业要求的对应关系</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <div id="gradReq"></div>
-      </div>
-    </details>
-    <details class="panel" data-panel="intro">
-      <summary><span class="panel-num">5</span><span class="panel-title">课程简介与目标要求</span><span class="panel-sum" data-sum="intro"></span></summary>
-      <div class="panel-body">
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgSettings" aria-labelledby="dlgSettingsTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgSettingsTitle">设置</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <div class="stack">
             <label>课程简介
-              <textarea id="description"></textarea>
+              <textarea id="description" placeholder="请输入课程简介..."></textarea>
             </label>
+            <p class="dlg-section">课程目标要求</p>
             <div id="requirements"></div>
+            <p class="dlg-section">上一学年达成度表</p>
+            <div class="row-actions">
+              <label class="file-btn secondary-file">导入上一学年达成度表
+                <input id="prevFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+              </label>
+              <span class="hint" id="prevName">不导入则按 0 对比</span>
+            </div>
+            <p class="dlg-section">AI 报告（DeepSeek）</p>
+            <p class="banner" id="aiBanner">正在检查 AI 报告是否可用…</p>
+            <p class="hint">网页版的 API Key 只保存在服务器上，这里不需要填写。</p>
           </div>
-      </div>
-    </details>
-    <details class="panel" data-panel="run">
-      <summary><span class="panel-num">6</span><span class="panel-title">计算与导出</span><span class="panel-sum" data-sum="run"></span></summary>
-      <div class="panel-body">
-          <div class="mode-switch" role="group" aria-label="计算模式">
-            <button type="button" id="modeForward" aria-pressed="true">正向模式</button>
-            <button type="button" class="secondary" id="modeReverse" aria-pressed="false">逆向模式</button>
-          </div>
-          <details class="sub" id="runOptions">
-            <summary>参数设置（模板人数、分布、报告风格、AI 字数、逆向噪声）</summary>
-          <div class="fields" style="margin-top:12px">
-            <label class="field">模板学生人数
-              <input id="studentCount" type="number" min="1" max="500" step="1">
-            </label>
-            <label class="field">分数跨度
-              <select id="spreadMode"></select>
-            </label>
-            <label class="field">分布模式
-              <select id="distribution"></select>
-            </label>
-            <label class="field">报告风格
-              <select id="reportStyle"></select>
-            </label>
-            <label class="field">AI 字数
-              <input id="wordLimit" type="number" min="50" max="800" step="10">
-            </label>
-          </div>
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgNoise" aria-labelledby="dlgNoiseTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgNoiseTitle">噪声注入详情（仅逆向模式）</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <div class="noise" id="noiseBox">
-            <label class="checks"><input id="noiseEnabled" type="checkbox"> 启用噪声注入（仅逆向）</label>
+            <label class="checks"><input id="noiseEnabled" type="checkbox"> 启用噪声注入</label>
             <label class="field">异常覆盖率
               <input id="noiseRatio" type="number" min="0" max="1" step="0.01">
             </label>
@@ -148,39 +211,55 @@
             </label>
             <div class="checks" id="noiseTargets"></div>
           </div>
-          </details>
-          <div class="actions" style="margin-top:14px">
-            <button type="button" id="templateBtn">下载成绩模板</button>
-            <label class="file-btn">导入成绩
-              <input id="gradeFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
-            </label>
-            <p class="hint" id="fileName">尚未导入成绩表</p>
-            <label class="file-btn">上一学年达成度表（可选）
-              <input id="prevFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
-            </label>
-            <p class="hint" id="prevName">不导入则按 0 对比</p>
-            <button type="button" id="calcBtn">计算达成度</button>
-            <button type="button" class="secondary" id="exportBtn">导出 xlsx / docx</button>
-            <button type="button" class="secondary" id="aiBtn">生成 AI 分析报告</button>
-          </div>
-      </div>
-    </details>
-    <details class="panel" data-panel="result">
-      <summary><span class="panel-num">7</span><span class="panel-title">计算结果</span><span class="panel-sum" data-sum="result"></span></summary>
-      <div class="panel-body">
-        <div id="resultView"><p class="hint">尚未计算。导入成绩表后点“计算达成度”。</p></div>
-      </div>
-    </details>
-    <details class="panel" data-panel="files">
-      <summary><span class="panel-num">8</span><span class="panel-title">本课程已保存的文件</span><span class="panel-sum" data-sum="files"></span></summary>
-      <div class="panel-body">
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>取消</button>
+          <button type="button" data-save>保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgTemplate" aria-labelledby="dlgTemplateTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgTemplateTitle">模板下载</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <label class="field">学生人数
+            <input id="studentCount" type="number" min="1" max="500" step="1">
+          </label>
+          <p class="hint">请填写班级学生总人数。模板按当前课程的考核方式生成列。</p>
+          <button type="button" id="templateBtn" style="margin-top:12px">点击下载</button>
+        </div>
+        <footer class="dlg-foot">
+
+          <button type="button" data-close>关闭</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg dlg-wide" id="dlgResult" aria-labelledby="dlgResultTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgResultTitle">计算结果详情</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <div id="resultView"></div>
+        </div>
+        <footer class="dlg-foot">
+
+          <button type="button" data-close>关闭</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgFiles" aria-labelledby="dlgFilesTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgFilesTitle">本课程已保存的文件</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
           <ul class="file-list" id="savedFiles"></ul>
           <button type="button" class="ghost small" id="filesMore" hidden>显示全部</button>
           <p class="hint">成绩表、模板和导出结果都留在这个课程文件夹里，之后可以再次下载。</p>
-      </div>
-    </details>
-    </div>
-    <div id="result" role="status" aria-live="polite"></div>
+        </div>
+        <footer class="dlg-foot">
+
+          <button type="button" data-close>关闭</button>
+        </footer>
+      </form>
+    </dialog>
   </main>
   <footer class="note">AI 密钥只从服务器环境变量读取，页面不会询问，也不会保存。计算仍在当次请求的临时目录中进行，输入和结果会写入当前课程文件夹。</footer>
   <script src="/static/relation_grid.js"></script>

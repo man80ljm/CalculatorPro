@@ -970,11 +970,9 @@ document.getElementById("calcBtn").addEventListener("click", async () => {
     const data = await response.json();
     await refreshFiles();
     storeResult(data);
+    updateSummaries();
     renderResultView();
-    setPanelOpen("result", true);
-    savePanelState();
-    document.querySelector('details[data-panel="result"]').scrollIntoView({ behavior: "smooth", block: "start" });
-    showResult("计算完成，结果见“计算结果”。", false);
+    showResult("计算完成。", false);
   } catch (err) {
     if (err.message !== "未登录") showResult(err.message || "计算失败", true);
   } finally {
@@ -1010,22 +1008,15 @@ document.getElementById("aiBtn").addEventListener("click", () => {
   downloadZip("/ai-report", "AI分析报告.zip", "正在生成 AI 分析报告…");
 });
 
-/* ---------- 折叠面板：每门课程记住展开状态，收起时显示一行摘要 ---------- */
-const PANEL_PREFIX = "calculatorpro.panels.";
+/* ---------- 主界面按钮 + 弹窗（对应桌面版 ui_app 的主窗口和各对话框） ---------- */
 const RESULT_PREFIX = "calculatorpro.result.";
 const FILES_PREVIEW = 6;
 const KIND_LABELS = { grade: "成绩表", previous: "上一学年", template: "模板", output: "导出", report: "AI 报告" };
+const RATIO_LINKS = [["平时考核", "平时"], ["期中考核", "期中"], ["期末考核", "期末"]];
 let showAllFiles = false;
 let summaryTimer = null;
-
-function panelNodes() {
-  return Array.from(document.querySelectorAll("details.panel"));
-}
-
-function setPanelOpen(key, open) {
-  const node = document.querySelector(`details.panel[data-panel="${key}"]`);
-  if (node) node.open = Boolean(open);
-}
+let dialogSnapshot = null;
+let aiEnabled = false;
 
 function readJson(key) {
   try {
@@ -1033,13 +1024,6 @@ function readJson(key) {
   } catch (err) {
     return null;
   }
-}
-
-function savePanelState() {
-  if (!courseId) return;
-  const map = {};
-  panelNodes().forEach((node) => { map[node.dataset.panel] = node.open; });
-  localStorage.setItem(PANEL_PREFIX + courseId, JSON.stringify(map));
 }
 
 function relationReady() {
@@ -1052,33 +1036,9 @@ function relationReady() {
   }
 }
 
-/* 默认只展开当前这一步需要的面板 */
-function defaultOpenPanels() {
-  const open = new Set();
-  if (!courseId) return open;
-  const named = String(state.courseBasic.course_name || state.courseOpen.course_name || "").trim();
-  if (!named) open.add("basic");
-  if (!relationReady()) {
-    open.add("relation");
-    return open;
-  }
-  open.add("run");
-  if (loadStoredResult()) open.add("result");
-  return open;
-}
-
-function applyPanelState() {
-  const saved = courseId ? readJson(PANEL_PREFIX + courseId) : null;
-  const defaults = defaultOpenPanels();
-  panelNodes().forEach((node) => {
-    const key = node.dataset.panel;
-    node.open = saved && Object.prototype.hasOwnProperty.call(saved, key) ? Boolean(saved[key]) : defaults.has(key);
-  });
-}
-
 function storeResult(data) {
   if (!courseId) return;
-  const keep = {
+  localStorage.setItem(RESULT_PREFIX + courseId, JSON.stringify({
     mode: data.mode,
     course_name: data.course_name,
     student_count: data.student_count,
@@ -1086,8 +1046,7 @@ function storeResult(data) {
     achievement: data.achievement || {},
     files: data.files || [],
     at: new Date().toISOString(),
-  };
-  localStorage.setItem(RESULT_PREFIX + courseId, JSON.stringify(keep));
+  }));
 }
 
 function loadStoredResult() {
@@ -1113,126 +1072,190 @@ function stat(label, value, strong) {
   ]);
 }
 
+/* 主界面的结果卡片：总达成度 + 关键数字，详情在弹窗里 */
+function renderResultCard() {
+  const card = document.getElementById("resultCard");
+  card.innerHTML = "";
+  const data = loadStoredResult();
+  const filesBtn = el("button", { type: "button", class: "ghost small", text: `已保存的文件（${courseFiles.length}）` });
+  filesBtn.addEventListener("click", () => openDialog("dlgFiles"));
+  if (!data) {
+    card.append(el("div", { class: "result-empty" }, [
+      el("span", { class: "hint", text: courseId ? "尚未计算。导入成绩表后点“计算达成度”。" : "请先新建或选择课程文件夹。" }),
+      filesBtn,
+    ]));
+    return;
+  }
+  const { total } = totalAchievement(data.achievement);
+  const when = data.at ? new Date(data.at).toLocaleString("zh-CN", { hour12: false }) : "";
+  const detailBtn = el("button", { type: "button", class: "secondary small", text: "查看详情" });
+  detailBtn.addEventListener("click", () => openDialog("dlgResult"));
+  card.append(
+    el("div", { class: "stats" }, [
+      stat("总达成度", total, true),
+      stat("学生人数", data.student_count),
+      stat("平均分", data.average_score),
+      stat("模式", data.mode === "reverse" ? "逆向" : "正向"),
+    ]),
+    el("div", { class: "result-foot" }, [
+      el("span", { class: "hint", text: `${data.course_name || ""} · 计算于 ${when}` }),
+      el("span", { class: "row-actions" }, [detailBtn, filesBtn]),
+    ]),
+  );
+}
+
+/* 结果详情弹窗：各课程目标、学生明细下载、生成的文件 */
 function renderResultView() {
   const root = document.getElementById("resultView");
   root.innerHTML = "";
   const data = loadStoredResult();
   if (!data) {
-    root.append(el("p", { class: "hint", text: "尚未计算。导入成绩表后点“计算达成度”。" }));
-    updateSummaries();
+    root.append(el("p", { class: "hint", text: "尚未计算。" }));
     return;
   }
   const { total, parts } = totalAchievement(data.achievement);
-  const when = data.at ? new Date(data.at).toLocaleString("zh-CN", { hour12: false }) : "";
   root.append(el("div", { class: "stats" }, [
     stat("总达成度", total, true),
     stat("学生人数", data.student_count),
     stat("平均分", data.average_score),
     stat("模式", data.mode === "reverse" ? "逆向" : "正向"),
   ]));
-  root.append(el("p", { class: "hint", text: `${data.course_name || ""} · 计算于 ${when}` }));
-
   const table = el("table", { class: "kv" });
   parts.forEach(([key, value]) => {
     table.append(el("tr", {}, [el("th", { text: key }), el("td", { text: String(value) })]));
   });
-  root.append(el("details", { class: "sub", "data-sub": "objectives" }, [
-    el("summary", { text: `各课程目标达成度（${parts.length}）` }),
-    table,
-  ]));
-
+  root.append(el("p", { class: "dlg-section", text: `各课程目标达成度（${parts.length}）` }), table);
+  root.append(el("p", { class: "dlg-section", text: `学生成绩明细（${data.student_count || 0} 人）` }));
+  root.append(el("p", { class: "hint", text: "每位学生的各考核方式得分与课程目标得分在“成绩明细.xlsx”里。" }));
   const detailFile = courseFiles.find((file) => file.kind === "output" && /成绩明细\.xlsx$/.test(file.original_name || ""));
-  const studentBox = el("div", { class: "sub-body" }, [
-    el("p", { class: "hint", text: "每位学生的各考核方式得分与课程目标得分在“成绩明细.xlsx”里。" }),
-  ]);
   if (detailFile) {
     const button = el("button", { type: "button", class: "secondary", text: `下载 ${detailFile.original_name}` });
     button.addEventListener("click", () => downloadSaved(detailFile));
-    studentBox.append(button);
+    root.append(button);
   }
-  root.append(el("details", { class: "sub", "data-sub": "students" }, [
-    el("summary", { text: `学生成绩明细（${data.student_count || 0} 人）` }),
-    studentBox,
-  ]));
-
   const list = el("ul", { class: "plain-list" });
   (data.files || []).forEach((name) => list.append(el("li", { text: name })));
-  root.append(el("details", { class: "sub", "data-sub": "outputs" }, [
-    el("summary", { text: `本次生成的文件（${(data.files || []).length}）` }),
-    list,
-  ]));
+  root.append(el("p", { class: "dlg-section", text: `本次生成的文件（${(data.files || []).length}）` }), list);
+}
+
+/* 成绩占比弹窗：三项占比写回对应关系表的“占比”列 */
+function currentRatios() {
+  const found = {};
+  iterGridRows().forEach((group) => {
+    const ratio = parsePortion(group.ratioText);
+    if (Number.isFinite(ratio)) found[group.name] = ratio;
+  });
+  return found;
+}
+
+function renderRatioFields() {
+  const root = document.getElementById("ratioFields");
+  root.innerHTML = "";
+  const found = currentRatios();
+  RATIO_LINKS.forEach(([name, label]) => {
+    const value = found[name];
+    const input = el("input", { type: "number", min: "0", max: "1", step: "0.05", "data-link": name });
+    input.value = Number.isFinite(value) ? String(value) : "0";
+    input.addEventListener("input", updateRatioDialogSum);
+    root.append(el("label", { class: "field", text: `${label}占比（${name}）` }, [input]));
+  });
+  updateRatioDialogSum();
+}
+
+function updateRatioDialogSum() {
+  let sum = 0;
+  document.querySelectorAll("#ratioFields input").forEach((input) => { sum += Number(input.value) || 0; });
+  const ok = Math.abs(sum - 1) < 0.001;
+  const note = document.getElementById("ratioDlgSum");
+  note.textContent = `合计 ${sum.toFixed(2)}${ok ? "" : "，需要等于 1.00"}`;
+  note.classList.toggle("bad", !ok);
+  return ok;
+}
+
+function applyRatioFields() {
+  if (!updateRatioDialogSum()) throw new Error("三项占比之和必须等于 1.0");
+  document.querySelectorAll("#ratioFields input").forEach((input) => {
+    const name = input.dataset.link;
+    const value = String(Number(input.value) || 0);
+    const index = state.grid.findIndex((row) => String(row[0] || "").trim() === name);
+    if (index >= 0) {
+      state.grid[index][1] = value;
+    } else if (Number(value) > 0) {
+      const row = blankRow();
+      row[0] = name;
+      row[1] = value;
+      state.grid.push(row);
+    }
+  });
+  renderGrid();
+  updateRatioSum();
+  renderNoiseTargets();
+}
+
+/* 弹窗：打开时拍快照；取消/Esc/× 时若有改动先确认，再恢复快照；保存则写服务器后关闭 */
+function snapshot() {
+  return JSON.stringify({ state, objCount: state.objectivesCount, ratios: Array.from(document.querySelectorAll("#ratioFields input")).map((i) => i.value) });
+}
+
+function openDialog(id) {
+  const dlg = document.getElementById(id);
+  if (!dlg) return;
+  if (dlg.hasAttribute("data-needs-course") && !courseId) return showResult("请先新建或选择课程文件夹", true);
+  if (id === "dlgRatio") renderRatioFields();
+  if (id === "dlgResult") renderResultView();
+  if (id === "dlgFiles") renderFiles();
+  dialogSnapshot = snapshot();
+  dlg.showModal();
+  const first = dlg.querySelector(".dlg-body input, .dlg-body textarea, .dlg-body select, .dlg-body button");
+  if (first) first.focus();
+}
+
+function dialogDirty() {
+  return dialogSnapshot !== null && dialogSnapshot !== snapshot();
+}
+
+function closeDialog(dlg, force) {
+  const savable = Boolean(dlg.querySelector("[data-save]"));
+  if (!force && savable && dialogDirty()) {
+    if (!window.confirm("有未保存的修改，确定放弃吗？")) return false;
+    const saved = JSON.parse(dialogSnapshot).state;
+    state = saved;
+    renderAll();
+  }
+  dialogSnapshot = null;
+  dlg.close();
   updateSummaries();
+  return true;
 }
 
-function joinBits(bits) {
-  return bits.filter((bit) => bit && String(bit).trim()).join(" · ");
-}
-
-function shortText(text, size) {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
-  return clean.length > size ? `${clean.slice(0, size)}…` : clean;
-}
-
-function updateSummaries() {
-  const set = (key, text) => {
-    const node = document.querySelector(`[data-sum="${key}"]`);
-    if (node) node.textContent = text || "未填写";
-  };
-  const o = state.courseOpen;
-  const years = o.year_start || o.year_end ? `${o.year_start || "?"}-${o.year_end || "?"} 学年` : "";
-  set("open", joinBits([years, o.semester ? `第${o.semester}学期` : "", o.department, o.teacher]));
-  const b = state.courseBasic;
-  set("basic", joinBits([
-    b.course_name || o.course_name,
-    b.credits ? `${b.credits} 学分` : "",
-    b.hours ? `${b.hours} 学时` : "",
-    b.student_count ? `${b.student_count} 人` : "",
-  ]));
-  const rows = state.grid.filter((row) => row.some((cell) => String(cell || "").trim())).length;
-  let ratios = "";
+async function saveDialog(dlg) {
   try {
-    ratios = buildRelationPayload().links.map((link) => `${link.name} ${formatPercent(link.ratio)}`).join(" / ");
+    if (dlg.id === "dlgRatio") applyRatioFields();
+    if (!courseId) throw new Error("请先新建课程文件夹");
+    await saveCourse();
+    closeDialog(dlg, true);
   } catch (err) {
-    ratios = "";
-  }
-  set("relation", joinBits([`${state.objectivesCount} 个目标`, `${rows} 行`, ratios || "占比未填", relationReady() ? "" : "未完成"]));
-  const filled = state.gradReq.slice(0, state.objectivesCount).filter((item) => (item.requirement || "").trim()).length;
-  set("grad", `已填 ${filled}/${state.objectivesCount} 个目标`);
-  set("intro", shortText(state.courseDescription, 28));
-  const grade = courseFiles.find((file) => file.kind === "grade");
-  const previous = courseFiles.find((file) => file.kind === "previous");
-  set("run", joinBits([
-    state.mode === "reverse" ? "逆向模式" : "正向模式",
-    grade ? `成绩表：${grade.original_name}` : "未导入成绩表",
-    previous ? "含上一学年" : "",
-  ]));
-  set("files", courseFiles.length ? `${courseFiles.length} 个文件` : "还没有文件");
-  const result = loadStoredResult();
-  if (result) {
-    const { total } = totalAchievement(result.achievement);
-    set("result", joinBits([`总达成度 ${total ?? "—"}`, `${result.student_count} 人`, `平均分 ${result.average_score}`]));
-  } else {
-    set("result", "尚未计算");
+    if (err.message !== "未登录") showResult(err.message || "保存失败", true);
   }
 }
 
-function afterCourseLoaded() {
-  renderResultView();
-  applyPanelState();
-  updateSummaries();
-}
-
-function bindPanels() {
-  panelNodes().forEach((node) => {
-    node.querySelector("summary").addEventListener("click", () => setTimeout(savePanelState, 0));
+function bindDialogs() {
+  document.querySelectorAll("[data-open]").forEach((button) => {
+    button.addEventListener("click", () => openDialog(button.dataset.open));
   });
-  document.getElementById("expandAllBtn").addEventListener("click", () => {
-    panelNodes().forEach((node) => { node.open = true; });
-    savePanelState();
-  });
-  document.getElementById("collapseAllBtn").addEventListener("click", () => {
-    panelNodes().forEach((node) => { node.open = false; });
-    savePanelState();
+  document.querySelectorAll("dialog.dlg").forEach((dlg) => {
+    dlg.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeDialog(dlg, false);
+    });
+    dlg.querySelectorAll("[data-close]").forEach((button) => {
+      button.addEventListener("click", () => closeDialog(dlg, false));
+    });
+    const save = dlg.querySelector("[data-save]");
+    if (save) save.addEventListener("click", () => saveDialog(dlg));
+    dlg.addEventListener("click", (event) => {
+      if (event.target === dlg) closeDialog(dlg, false);
+    });
   });
   document.getElementById("filesMore").addEventListener("click", () => {
     showAllFiles = !showAllFiles;
@@ -1242,16 +1265,62 @@ function bindPanels() {
     clearTimeout(summaryTimer);
     summaryTimer = setTimeout(updateSummaries, 150);
   };
-  document.querySelector("main").addEventListener("input", refresh);
-  document.querySelector("main").addEventListener("change", refresh);
+  document.addEventListener("input", refresh);
+  document.addEventListener("change", refresh);
   document.querySelector("main").addEventListener("click", (event) => {
     if (event.target.closest("#modeForward, #modeReverse, #addRowBtn, #removeRowsBtn")) refresh();
   });
 }
 
+function filledState(values) {
+  const filled = values.filter((value) => String(value || "").trim()).length;
+  if (!filled) return ["todo", "未填"];
+  if (filled === values.length) return ["done", "✓ 已填"];
+  return ["part", `部分 ${filled}/${values.length}`];
+}
+
+/* 主界面按钮上的完成状态 */
+function updateSummaries() {
+  const set = (key, [tone, text]) => {
+    const node = document.querySelector(`[data-status="${key}"]`);
+    if (!node) return;
+    node.textContent = text;
+    node.dataset.tone = tone;
+  };
+  set("open", filledState(OPEN_FIELDS.map(([key]) => state.courseOpen[key])));
+  set("basic", filledState(BASIC_FIELDS.map(([key]) => state.courseBasic[key])));
+  const found = currentRatios();
+  const ratioValues = RATIO_LINKS.map(([name]) => found[name] || 0);
+  const ratioSum = ratioValues.reduce((a, b) => a + b, 0);
+  set("ratio", Math.abs(ratioSum - 1) < 0.001
+    ? ["done", `✓ ${ratioValues.map((v) => Math.round(v * 100)).join("/")}`]
+    : ratioSum > 0 ? ["part", `合计 ${ratioSum.toFixed(2)}`] : ["todo", "未填"]);
+  const rows = state.grid.filter((row) => row.some((cell) => String(cell || "").trim())).length;
+  set("relation", relationReady() ? ["done", `✓ ${state.objectivesCount} 个目标 · ${rows} 行`] : rows ? ["part", `未完成 · ${rows} 行`] : ["todo", "未填"]);
+  const gradValues = [];
+  state.gradReq.slice(0, state.objectivesCount).forEach((item) => { gradValues.push(item.requirement, item.indicator); });
+  set("grad", filledState(gradValues));
+  const previous = courseFiles.find((file) => file.kind === "previous");
+  const settingsState = filledState([state.courseDescription, ...state.objectiveRequirements.slice(0, state.objectivesCount)]);
+  if (previous) settingsState[1] += " · 含上一学年";
+  set("settings", settingsState);
+  const grade = courseFiles.find((file) => file.kind === "grade");
+  const fileNode = document.getElementById("fileName");
+  fileNode.textContent = grade ? `✓ ${grade.original_name}` : "未导入";
+  fileNode.dataset.tone = grade ? "done" : "todo";
+  const noiseBtn = document.getElementById("noiseBtn");
+  noiseBtn.textContent = state.noiseEnabled ? `已配置 ${Math.round((Number(state.noiseRatio) || 0) * 100)}%` : "无";
+  noiseBtn.disabled = state.mode !== "reverse";
+  renderResultCard();
+}
+
+function afterCourseLoaded() {
+  updateSummaries();
+}
+
 state.grid = defaultRows();
 bindOnce();
-bindPanels();
+bindDialogs();
 renderAll();
 afterCourseLoaded();
 loadCourses();
