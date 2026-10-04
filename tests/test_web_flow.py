@@ -598,3 +598,14 @@ def test_database_url_required_unless_sqlite_opt_in(monkeypatch, tmp_path):
     monkeypatch.setenv("ALLOW_SQLITE", "0")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db:5432/x")
     assert database_url().startswith("postgresql+psycopg://")
+
+
+def test_home_sections_are_collapsible_panels(client):
+    page = client.get("/").text
+    for key in ["open", "basic", "relation", "grad", "intro", "run", "result", "files"]:
+        assert f'data-panel="{key}"' in page
+        assert f'data-sum="{key}"' in page
+    assert page.count('<details class="panel"') == 8
+    assert 'id="resultView"' in page and 'id="filesMore"' in page
+    script = client.get("/static/app.js").text
+    assert "calculatorpro.panels." in script and "localStorage" in script
