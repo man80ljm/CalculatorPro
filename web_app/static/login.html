@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · CalculatorPro</title>
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --ink: #1c2430;
+      --muted: #5e6872;
+      --card: #fffdf8;
+      --line: #e4dccf;
+      --accent: #0f6e56;
+      --danger: #8d2f2f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(900px 420px at 10% -10%, #efe6d4 0%, transparent 60%),
+        var(--bg);
+      color: var(--ink);
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    }
+    main {
+      width: min(420px, calc(100% - 32px));
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 32px 28px 28px;
+      box-shadow: 0 18px 50px rgba(48, 36, 16, 0.08);
+    }
+    p.kicker {
+      margin: 0 0 8px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-size: 12px;
+      color: var(--accent);
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; font-weight: 650; }
+    .lead { margin: 0 0 22px; color: var(--muted); line-height: 1.6; }
+    label { display: block; font-size: 14px; margin-bottom: 8px; }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font: inherit;
+      color: inherit;
+    }
+    input:focus { outline: 2px solid rgba(15, 110, 86, 0.25); border-color: var(--accent); }
+    button {
+      margin-top: 16px;
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: white;
+      font: inherit;
+      font-weight: 650;
+      padding: 12px 16px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: progress; }
+    .error { min-height: 1.4em; margin: 12px 0 0; color: var(--danger); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="kicker">CalculatorPro</p>
+    <h1>课程目标达成度</h1>
+    <p class="lead">请输入教研室共用密码。课程信息和成绩不会留在服务器上。</p>
+    <form id="form">
+      <label for="password">访问密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">进入</button>
+      <p class="error" id="error" role="alert"></p>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById("form");
+    const error = document.getElementById("error");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      error.textContent = "";
+      const button = form.querySelector("button");
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("password").value }),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          error.textContent = typeof data.detail === "string" ? data.detail : "登录失败";
+          return;
+        }
+        location.href = "/";
+      } catch (err) {
+        error.textContent = "无法连接服务器";
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

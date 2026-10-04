@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CalculatorPro · 课程目标达成度</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="kicker">CalculatorPro</p>
+      <h1>课程目标达成情况评价</h1>
+      <p>正向计算、逆向推分、统计表和 AI 分析。设置只留在这台浏览器里。</p>
+    </div>
+    <div class="row-actions">
+      <button class="ghost" id="clearBtn" type="button">清空本机设置</button>
+      <button class="ghost" id="logoutBtn" type="button">退出</button>
+    </div>
+  </header>
+  <main>
+    <p class="banner" id="aiBanner">正在检查 AI 报告是否可用…</p>
+    <div class="grid">
+      <div>
+        <section>
+          <h2>开课信息</h2>
+          <div class="fields" id="openFields"></div>
+        </section>
+        <section style="margin-top:16px">
+          <h2>课程基本信息</h2>
+          <div class="fields" id="basicFields"></div>
+        </section>
+        <section style="margin-top:16px">
+          <h2>课程考核与课程目标对应关系</h2>
+          <div class="fields">
+            <label class="field">课程目标数量
+              <input id="objCount" type="number" min="1" max="8" step="1">
+            </label>
+          </div>
+          <p class="hint">三个环节占比之和必须为 1。占比为 0 的环节不会写入模板。同一环节内，各考核方式的目标权重合计应为 100。</p>
+          <div id="links"></div>
+          <p class="hint ratio-note" id="ratioSum"></p>
+        </section>
+        <section style="margin-top:16px">
+          <h2>课程目标与毕业要求</h2>
+          <div id="gradReq"></div>
+        </section>
+        <section style="margin-top:16px">
+          <h2>课程简介与目标要求</h2>
+          <div class="stack">
+            <label>课程简介
+              <textarea id="description"></textarea>
+            </label>
+            <div id="requirements"></div>
+          </div>
+        </section>
+      </div>
+      <div>
+        <section>
+          <h2>计算与导出</h2>
+          <div class="mode-switch" role="group" aria-label="计算模式">
+            <button type="button" id="modeForward" aria-pressed="true">正向模式</button>
+            <button type="button" class="secondary" id="modeReverse" aria-pressed="false">逆向模式</button>
+          </div>
+          <div class="fields" style="margin-top:12px">
+            <label class="field">模板学生人数
+              <input id="studentCount" type="number" min="1" max="500" step="1">
+            </label>
+            <label class="field">分数跨度
+              <select id="spreadMode"></select>
+            </label>
+            <label class="field">分布模式
+              <select id="distribution"></select>
+            </label>
+            <label class="field">报告风格
+              <select id="reportStyle"></select>
+            </label>
+            <label class="field">AI 字数
+              <input id="wordLimit" type="number" min="50" max="800" step="10">
+            </label>
+          </div>
+          <div class="noise" id="noiseBox">
+            <label class="checks"><input id="noiseEnabled" type="checkbox"> 启用噪声注入（仅逆向）</label>
+            <label class="field">异常覆盖率
+              <input id="noiseRatio" type="number" min="0" max="1" step="0.01">
+            </label>
+            <label class="field">挂科严重程度
+              <select id="severityMode">
+                <option value="random">随机分布（40-59）</option>
+                <option value="near_miss">边缘挂科（55-59）</option>
+                <option value="catastrophic">严重缺失（0-40）</option>
+              </select>
+            </label>
+            <div class="checks" id="noiseTargets"></div>
+          </div>
+          <div class="actions" style="margin-top:14px">
+            <button type="button" id="templateBtn">下载成绩模板</button>
+            <label class="file-btn">导入成绩
+              <input id="gradeFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+            </label>
+            <p class="hint" id="fileName">尚未选择文件</p>
+            <label class="file-btn">上一学年达成度表（可选）
+              <input id="prevFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+            </label>
+            <p class="hint" id="prevName">不上传则按 0 对比</p>
+            <button type="button" id="calcBtn">计算达成度</button>
+            <button type="button" class="secondary" id="exportBtn">导出 xlsx / docx</button>
+            <button type="button" class="secondary" id="aiBtn">生成 AI 分析报告</button>
+          </div>
+        </section>
+      </div>
+    </div>
+    <section id="result"></section>
+  </main>
+  <footer class="note">DeepSeek 密钥只从服务器环境变量读取，页面不会询问，也不会保存。上传文件在当次请求的临时目录中处理，结束后删除。</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
