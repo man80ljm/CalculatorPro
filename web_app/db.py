@@ -26,11 +26,23 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def sqlite_allowed() -> bool:
+    return os.environ.get("ALLOW_SQLITE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def database_url() -> str:
+    """部署必须显式配置 DATABASE_URL；SQLite 只在 ALLOW_SQLITE=1 时允许（测试、本地试用）。"""
     url = os.environ.get("DATABASE_URL", "").strip()
-    if url:
-        return url
-    return "sqlite:///./calculatorpro.db"
+    if not url:
+        if sqlite_allowed():
+            return "sqlite:///./calculatorpro.db"
+        raise RuntimeError(
+            "DATABASE_URL is required (e.g. postgresql+psycopg://user:pass@postgres:5432/calculatorpro). "
+            "Set ALLOW_SQLITE=1 to explicitly opt in to a local SQLite database for tests or trials."
+        )
+    if url.startswith("sqlite") and not sqlite_allowed():
+        raise RuntimeError("DATABASE_URL points to SQLite; set ALLOW_SQLITE=1 to explicitly allow it.")
+    return url
 
 
 def get_engine() -> Engine:

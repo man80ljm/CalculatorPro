@@ -577,3 +577,24 @@ def test_client_key_only_trusts_forwarded_from_proxies(monkeypatch):
     assert _client_key(make("198.51.100.7", "1.2.3.4")) == "198.51.100.7"
     monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.0/8")
     assert _client_key(make("172.18.0.1", "203.0.113.9")) == "172.18.0.1"
+
+
+def test_database_url_required_unless_sqlite_opt_in(monkeypatch, tmp_path):
+    from web_app.app import create_app
+    from web_app.db import database_url
+
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("ALLOW_SQLITE", raising=False)
+    with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
+        create_app()
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///" + (tmp_path / "x.db").as_posix())
+    with pytest.raises(RuntimeError, match="ALLOW_SQLITE"):
+        create_app()
+    monkeypatch.setenv("ALLOW_SQLITE", "1")
+    assert database_url().startswith("sqlite:///")
+    monkeypatch.delenv("DATABASE_URL")
+    assert database_url() == "sqlite:///./calculatorpro.db"
+    monkeypatch.setenv("ALLOW_SQLITE", "0")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db:5432/x")
+    assert database_url().startswith("postgresql+psycopg://")

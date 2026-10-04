@@ -42,3 +42,68 @@ def test_coerce_relation_grid_rejects_bad_shape():
         coerce_relation_grid({"a": 1})
     with pytest.raises(ValueError):
         coerce_relation_grid([["ok"], "bad"])
+
+
+EXCEL_MULTILINE = (
+    '考核环节\t占比\t考核方式\t课程目标1\t课程目标2\r\n'
+    '平时考核\t0.3\t"平时作业\n(含实验)"\t50%\t50%\r\n'
+    '期末考核\t0.7\t"期末""闭卷""考试"\t40%\t60%\r\n'
+)
+
+
+def test_parse_excel_quoted_cells_with_newlines_tabs_and_quotes():
+    assert parse_pasted_table(EXCEL_MULTILINE) == [
+        ["考核环节", "占比", "考核方式", "课程目标1", "课程目标2"],
+        ["平时考核", "0.3", "平时作业\n(含实验)", "50%", "50%"],
+        ["期末考核", "0.7", '期末"闭卷"考试', "40%", "60%"],
+    ]
+    # 引号内的制表符和 CRLF 不拆格/拆行；CRLF 统一成 \n
+    assert parse_pasted_table('"a\tb"\tc\r\n"x\r\ny"\n') == [["a\tb", "c"], ["x\ny"]]
+    # 单个多行单元格
+    assert parse_pasted_table('"line1\nline2"') == [["line1\nline2"]]
+    # 引号未闭合：按普通文本
+    assert parse_pasted_table('"abc\tdef\nghi') == [['"abc', "def"], ["ghi"]]
+    # 不是以引号开头的单元格里的引号是普通字符
+    assert parse_pasted_table('5"\t6\n') == [['5"', "6"]]
+    # 空的引号单元格、行尾空格
+    assert parse_pasted_table('""\tx\n') == [["", "x"]]
+
+
+def test_multiline_cell_flows_into_relation_payload():
+    payload = relation_payload_from_grid(parse_pasted_table(EXCEL_MULTILINE))
+    assert payload["links"][0]["methods"][0]["name"] == "平时作业\n(含实验)"
+    assert payload["links"][1]["methods"][0]["name"] == '期末"闭卷"考试'
+
+
+JS_CASES = [
+    EXCEL_MULTILINE,
+    '"a\tb"\tc\r\n"x\r\ny"\n',
+    '"line1\nline2"',
+    '"abc\tdef\nghi',
+    '5"\t6\n',
+    '""\tx\n',
+    "a\tb\nc\td\n",
+    "a\tb\n\nc",
+    "\n",
+    "",
+    "only\t\tcell\r\n",
+]
+
+
+def test_js_parser_matches_python():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    js = Path(__file__).resolve().parents[1] / "web_app" / "static" / "relation_grid.js"
+    script = (
+        f"const {{ parsePastedTable }} = require({json.dumps(str(js))});"
+        "const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+        "process.stdout.write(JSON.stringify(cases.map(parsePastedTable)));"
+    )
+    out = subprocess.run([node, "-e", script], input=json.dumps(JS_CASES), capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [parse_pasted_table(case) for case in JS_CASES]

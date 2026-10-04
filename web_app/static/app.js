@@ -328,12 +328,19 @@ function renderGrid() {
         tr.append(el("td", { class: "readonly", "data-subtotal": "1", text: subtotalText(row) }));
         return;
       }
-      const input = el("input", { type: "text", value: row[col] || "" });
+      // textarea 而不是 input：单元格可以保留 Excel 里 Alt+Enter 的换行
+      const input = el("textarea", { rows: "1", class: "cell" });
+      input.value = row[col] || "";
+      const fit = () => {
+        input.rows = Math.max(1, String(input.value).split("\n").length);
+      };
+      fit();
       input.addEventListener("focus", () => {
         focusCell = { row: rowIndex, col };
       });
       input.addEventListener("input", () => {
         state.grid[rowIndex][col] = input.value;
+        fit();
         const total = tr.querySelector("[data-subtotal]");
         if (total) total.textContent = subtotalText(state.grid[rowIndex]);
         updateRatioSum();
@@ -353,7 +360,7 @@ function renderGrid() {
     body.append(tr);
   });
   table.append(body);
-  const focused = table.querySelector("td.focused input");
+  const focused = table.querySelector("td.focused textarea");
   if (focused) focused.focus();
 }
 

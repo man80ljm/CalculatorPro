@@ -247,7 +247,8 @@ header, main { max-width: 1180px; }
 .sheet td.focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sheet tr.row-selected td { background: var(--accent-soft); }
 
-.sheet input {
+.sheet input,
+.sheet textarea.cell {
   border: 0;
   border-radius: 0;
   padding: 8px 6px;
@@ -255,6 +256,18 @@ header, main { max-width: 1180px; }
   text-align: center;
   background: transparent;
 }
+
+.sheet textarea.cell {
+  display: block;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  overflow: hidden;
+  font: inherit;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.sheet textarea.cell:focus { outline: none; }
 
 .file-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
 .file-list li { display: flex; justify-content: space-between; gap: 8px; align-items: center; }

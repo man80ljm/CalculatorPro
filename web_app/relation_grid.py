@@ -1,7 +1,7 @@
 """课程考核与课程目标对应关系：粘贴解析与表格校验。
 
 `parse_pasted_table` 与浏览器里的 `parsePastedTable`（static/relation_grid.js）保持同一规则：
-制表符分列、换行分行，兼容 \\r\\n，末尾换行不额外产生空行，允许每行列数不同。
+按 Excel 的 TSV 规则：制表符分列、未加引号的换行分行，引号单元格可含换行/制表符/""，兼容 \\r\\n，末尾换行不额外产生空行，允许每行列数不同。
 """
 from __future__ import annotations
 
@@ -10,20 +10,70 @@ MAX_COLS = 40
 MAX_CELL = 2000
 
 def parse_pasted_table(text: str) -> list[list[str]]:
-    """把从 Excel 复制的文本拆成行和单元格。
+    """把从 Excel 复制的文本（TSV）拆成行和单元格，规则同 Excel：
 
-    - 列以制表符分隔，行以换行分隔
-    - ``\\r\\n``、``\\n``、``\\r`` 都算换行
-    - 文本结尾的换行不会多出一行（与 ``str.splitlines`` 一致）
-    - 中间的空行保留；各行的列数可以不同
+    - 列以制表符分隔，未加引号的换行分行；``\\r\\n``、``\\r`` 都视为 ``\\n``
+    - 以 ``"`` 开头的单元格是引号单元格，内部可含换行（Alt+Enter）、制表符，``""`` 表示一个 ``"``
+    - 引号没有闭合时按普通文本处理
+    - 文本结尾的换行不会多出一行；中间的空行保留；各行的列数可以不同
     """
     if text is None:
         return []
     if not isinstance(text, str):
         raise TypeError("text must be a string")
-    if text == "":
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
+    if s == "":
         return []
-    return [line.split("\t") for line in text.splitlines()]
+    n = len(s)
+
+    def plain_end(start: int) -> int:
+        k = start
+        while k < n and s[k] not in "\t\n":
+            k += 1
+        return k
+
+    rows: list[list[str]] = []
+    row: list[str] = []
+    i = 0
+    while True:
+        if i < n and s[i] == '"':
+            j = i + 1
+            buf: list[str] = []
+            closed = False
+            while j < n:
+                if s[j] == '"':
+                    if j + 1 < n and s[j + 1] == '"':
+                        buf.append('"')
+                        j += 2
+                        continue
+                    closed = True
+                    j += 1
+                    break
+                buf.append(s[j])
+                j += 1
+            if closed:
+                k = plain_end(j)
+                field = "".join(buf) + s[j:k]
+            else:
+                k = plain_end(i)
+                field = s[i:k]
+        else:
+            k = plain_end(i)
+            field = s[i:k]
+        i = k
+        row.append(field)
+        if i >= n:
+            rows.append(row)
+            break
+        if s[i] == "\t":
+            i += 1
+            continue
+        rows.append(row)
+        row = []
+        i += 1
+        if i >= n:
+            break
+    return rows
 
 
 def coerce_relation_grid(value) -> list[list[str]]:

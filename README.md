@@ -94,7 +94,7 @@ pyinstaller --onedir -w --clean --noconfirm --icon=calculator.ico --add-data "ca
 
 教师自行注册账号（用户名或邮箱 + 至少 8 位密码）。登录后按课程建立文件夹：开课信息、占比、课程目标对应关系、成绩表、上一学年达成度表，以及生成的模板和报表都保存在该文件夹里，换一台电脑登录仍能查看和下载。计算仍在当次请求的临时目录中进行，结束后把输入和结果写入课程目录。DeepSeek 密钥只放在服务器环境变量里，页面不提供密钥输入框。登录和注册按 IP（登录另按用户名）限流；修改密码需要输入当前密码，修改后其他设备上的登录会话会失效。
 
-课程考核与课程目标对应关系是一张可编辑表格：格子可以直接改，也能从 Excel 粘贴（制表符分列、换行分行，兼容 Windows 换行和行尾换行）。可以添加行、删除选中行。粘贴从当前格子开始，行数不够时自动加行。
+课程考核与课程目标对应关系是一张可编辑表格：格子可以直接改，也能从 Excel 粘贴，按 Excel 的复制格式解析：制表符分列、换行分行；单元格内用 Alt+Enter 换行、含制表符或双引号时，Excel 会给该格加引号（内部 `""` 表示一个 `"`），这种格子会完整保留为一格，不会被拆开。兼容 Windows 换行和行尾换行。可以添加行、删除选中行。粘贴从当前格子开始，行数不够时自动加行。
 
 ### 环境变量
 
@@ -102,7 +102,8 @@ pyinstaller --onedir -w --clean --noconfirm --icon=calculator.ico --add-data "ca
 | --- | --- |
 | `SECRET_KEY` | 签名会话 Cookie 的密钥。未设置时进程直接退出。 |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Postgres 账号，供 compose 里的数据库容器使用。 |
-| `DATABASE_URL` | 例如 `postgresql+psycopg://calculatorpro:密码@postgres:5432/calculatorpro`。本地试用可写成 `sqlite:///./calculatorpro.db`。 |
+| `DATABASE_URL` | 例如 `postgresql+psycopg://calculatorpro:密码@postgres:5432/calculatorpro`。**必填**：未设置时服务拒绝启动。本地试用可写成 `sqlite:///./calculatorpro.db`，但必须同时设置 `ALLOW_SQLITE=1`。 |
+| `ALLOW_SQLITE` | 设为 `1` 才允许使用 SQLite（测试和本地试用）；未设置 `DATABASE_URL` 时也会退回到 `./calculatorpro.db`。部署时不要设置。 |
 | `DEEPSEEK_API_KEY` | 服务器调用 `https://api.deepseek.com`、模型 `deepseek-chat` 的密钥。留空时 AI 分析报告会提示未配置，模板、计算和 xlsx/docx 导出仍可用。 |
 | `COOKIE_SECURE` | `true` 时会话 Cookie 带 Secure。只在 HTTPS 反向代理后打开，默认 `false`。 |
 | `UPLOAD_DIR` | 课程文件目录。容器里是 `/data/uploads`，对应宿主机 `/data/uploads/calculatorpro`。 |
@@ -136,6 +137,7 @@ Windows PowerShell：
 ```powershell
 $env:SECRET_KEY="请换成一长串随机字符"
 $env:DATABASE_URL="sqlite:///./calculatorpro.db"
+$env:ALLOW_SQLITE="1"
 $env:UPLOAD_DIR="./data/uploads"
 $env:DEEPSEEK_API_KEY=""
 uvicorn web_app.app:app --host 127.0.0.1 --port 18090
@@ -146,6 +148,7 @@ Linux / macOS：
 ```bash
 export SECRET_KEY="请换成一长串随机字符"
 export DATABASE_URL="sqlite:///./calculatorpro.db"
+export ALLOW_SQLITE=1
 export UPLOAD_DIR="./data/uploads"
 export DEEPSEEK_API_KEY=""
 uvicorn web_app.app:app --host 127.0.0.1 --port 18090
