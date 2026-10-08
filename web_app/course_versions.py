@@ -69,3 +69,30 @@ def new_syllabus_version(db, course, settings: dict, *, expected_version=None) -
     stored[VERSION_ID] = version.id
     course.settings_json = json.dumps(stored, ensure_ascii=False)
     return version
+
+
+def existing_courses(db, user_id: int, name: str, settings: dict, *, exclude_id=None) -> list[dict]:
+    """课程代码优先；同名且双方代码明确不同的课程可以分别建立。"""
+    from web_app.db import Course
+    from web_app.terms import parse_settings
+    code = str((settings.get("course_basic_info") or {}).get("course_code") or "").strip().casefold()
+    normalized = str(name or "").strip().casefold()
+    matches = []
+    for course in db.scalars(select(Course).where(Course.user_id == user_id).order_by(Course.updated_at.desc(), Course.id.desc())).all():
+        if course.id == exclude_id:
+            continue
+        stored = parse_settings(course.settings_json)
+        other_code = str((stored.get("course_basic_info") or {}).get("course_code") or "").strip()
+        if (code and code == other_code.casefold()) or (normalized == course.name.strip().casefold() and not (code and other_code and code != other_code.casefold())):
+            matches.append({"id": course.id, "name": course.name, "course_code": other_code,
+                            "syllabus_version": stored.get(VERSION, 1),
+                            "updated_at": course.updated_at.isoformat(timespec="seconds") if course.updated_at else None})
+    return matches
+
+
+def reject_existing_course(db, user_id: int, name: str, settings: dict) -> None:
+    from web_app.service import ServiceError
+    matches = existing_courses(db, user_id, name, settings)
+    if matches:
+        raise ServiceError(f"已有“{name}”，请选择打开已有课程或用新大纲更新。", status=409,
+                           code="existing_course", courses=matches)

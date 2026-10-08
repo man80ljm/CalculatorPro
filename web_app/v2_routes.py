@@ -528,6 +528,8 @@ def attach(application) -> None:
         from web_app.db import Course
 
         with session_scope() as db:
+            from web_app.course_versions import reject_existing_course
+            reject_existing_course(db, user_id, extra["course_name"][:120], settings)
             course = Course(
                 user_id=user_id,
                 name=extra["course_name"][:120],

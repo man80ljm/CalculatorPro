@@ -565,6 +565,7 @@ def create_app() -> FastAPI:
                         {
                             "id": row.id,
                             "name": row.name,
+                            "course_code": (_settings_of(row).get("course_basic_info") or {}).get("course_code", ""),
                             "updated_at": row.updated_at.isoformat(timespec="seconds") if row.updated_at else None,
                         }
                         for row in rows
@@ -584,6 +585,8 @@ def create_app() -> FastAPI:
             raise ServiceError("课程设置格式不正确")
         settings = absorb_relation_grid(settings, strict=False)
         with session_scope() as db:
+            from web_app.course_versions import reject_existing_course
+            reject_existing_course(db, user_id, name, settings)
             course = Course(
                 user_id=user_id,
                 name=name,

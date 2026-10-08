@@ -974,7 +974,15 @@ async function flushSave() {
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     const option = document.querySelector(`#courseSelect option[value="${courseAtStart}"]`);
-    if (option && data.name) option.textContent = data.name;
+    if (option && data.name) {
+      option.dataset.courseName = data.name;
+      option.dataset.courseCode = (data.settings.course_basic_info || {}).course_code || "";
+      const options = [...document.querySelectorAll("#courseSelect option")];
+      options.forEach((item) => {
+        const repeated = options.filter((other) => other.dataset.courseName === item.dataset.courseName).length > 1;
+        item.textContent = repeated && item.dataset.courseCode ? `${item.dataset.courseName}（${item.dataset.courseCode}）` : item.dataset.courseName;
+      });
+    }
     if (!saveDirty && courseId === courseAtStart) setSaveStatus("saved", "已保存");
     result = data;
   } catch (err) {
@@ -1088,6 +1096,11 @@ function applyCoursePayload(data) {
   renderTerms();
   renderAll();
   renderFiles();
+  const versionHint = document.getElementById("syllabusVersionHint");
+  const latestVersion = data.latest_syllabus_version || 1;
+  const termVersion = data.current_term ? (data.current_term.syllabus_version || 1) : latestVersion;
+  versionHint.hidden = false;
+  versionHint.textContent = data.current_term ? `本学期使用第${termVersion}版大纲。${termVersion !== latestVersion ? `新导入的学期将使用第${latestVersion}版大纲。` : ""}` : `第${latestVersion}版大纲已保存，导入成绩登记表后建立学期。`;
   setSaveStatus("saved", "已保存");
   } finally {
     savePaused = false;
@@ -1116,6 +1129,7 @@ async function loadCourses(preferId) {
     terms = [];
     currentTermId = null;
     select.append(el("option", { value: "", text: "尚未创建课程" }));
+    document.getElementById("syllabusVersionHint").hidden = true;
     renderTerms();
     renderFiles();
     setSaveStatus("idle", "");
@@ -1123,7 +1137,12 @@ async function loadCourses(preferId) {
     return;
   }
   courses.forEach((course) => {
-    select.append(el("option", { value: String(course.id), text: course.name }));
+    const repeated = courses.filter((item) => item.name === course.name).length > 1;
+    const label = repeated && course.course_code ? `${course.name}（${course.course_code}）` : course.name;
+    const option = el("option", { value: String(course.id), text: label });
+    option.dataset.courseName = course.name;
+    option.dataset.courseCode = course.course_code || "";
+    select.append(option);
   });
   const stored = Number(localStorage.getItem(COURSE_KEY));
   const wanted = preferId || stored;
@@ -1224,6 +1243,8 @@ function bindOnce() {
     }
   });
   document.getElementById("newCourseBtn").addEventListener("click", async () => {
+    const button = document.getElementById("newCourseBtn");
+    button.disabled = true;
     const name = document.getElementById("courseNameInput").value.trim() || "未命名课程";
     try {
       if (courseId) await saveCourse();
@@ -1232,12 +1253,23 @@ function bindOnce() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      if (response.status === 409) {
+        const data = await response.json();
+        if (data.code === "existing_course") {
+          const choice = await askExistingCourse(data, false);
+          if (choice) await loadCourses(choice.course.id);
+          return;
+        }
+        return showResult(data.detail || "新建失败", true);
+      }
       if (!response.ok) return showResult(await errorMessage(response), true);
       const data = await response.json();
       await loadCourses(data.id);
       showResult(`已新建课程文件夹：${data.name}`, false);
     } catch (err) {
       if (err.message !== "未登录") showResult(err.message || "新建失败", true);
+    } finally {
+      button.disabled = false;
     }
   });
   document.getElementById("saveStatus").addEventListener("click", () => {
@@ -2230,19 +2262,39 @@ document.getElementById("wizardCreate").addEventListener("click", async () => {
     grad_req_map: wizard.grad,
     relation_grid: wizard.relation.grid,
   };
-  const response = await api("/api/courses/from-syllabus", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    document.getElementById("wizardRelationMsg").textContent = await errorMessage(response);
-    return;
+  const button = document.getElementById("wizardCreate");
+  button.disabled = true;
+  try {
+    let response = await api("/api/courses/from-syllabus", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    let updated = false;
+    if (response.status === 409) {
+      const data = await response.json();
+      if (data.code !== "existing_course") throw new Error(data.detail || "建课失败");
+      const choice = await askExistingCourse(data, true);
+      if (!choice) return;
+      if (choice.action === "open") {
+        closeDialog(document.getElementById("dlgWizard"), true);
+        await loadCourses(choice.course.id);
+        return;
+      }
+      response = await api(`/api/courses/${choice.course.id}/syllabus-version`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, expected_version: choice.course.syllabus_version }),
+      });
+      updated = true;
+    }
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const created = await response.json();
+    closeDialog(document.getElementById("dlgWizard"), true);
+    await loadCourses(created.id);
+    showResult(updated ? `已保存第${created.latest_syllabus_version}版大纲，之后新导入的学期使用新版。` : "已按大纲建课。", false);
+  } catch (err) {
+    if (err.message !== "未登录") document.getElementById("wizardRelationMsg").textContent = err.message || "建课失败";
+  } finally {
+    button.disabled = !(wizard && wizard.relation && wizard.relation.ok);
   }
-  const created = await response.json();
-  closeDialog(document.getElementById("dlgWizard"), true);
-  await loadCourses(created.id);
-  showResult("已按大纲建课。", false);
 });
 
 document.getElementById("termSelect").addEventListener("change", async () => {
@@ -2303,6 +2355,53 @@ async function postRegister(file, extra) {
     if (options[key]) body.append(key, options[key]);
   });
   return api(`/api/courses/${courseId}/grade-register`, { method: "POST", body });
+}
+
+function askExistingCourse(data, canUpdate) {
+  const dlg = document.getElementById("dlgCourseExists");
+  const courses = data.courses || [];
+  const select = document.getElementById("courseExistsSelect");
+  select.innerHTML = "";
+  courses.forEach((course) => {
+    const code = course.course_code ? `（${course.course_code}）` : "";
+    select.append(el("option", { value: String(course.id), text: `${course.name}${code} · 第${course.syllabus_version || 1}版大纲` }));
+  });
+  document.getElementById("courseExistsSelectWrap").hidden = courses.length <= 1;
+  document.getElementById("courseExistsMessage").textContent = data.detail || "已有这门课程，请选择如何处理。";
+  document.getElementById("courseExistsAdvice").textContent = canUpdate ? "更新后，新学期使用新版大纲；旧学期保留原来的目标、比例和对应关系，已保存的成绩和报告也会保留。" : "打开已有课程后，可以继续导入新的学期成绩。";
+  const update = document.getElementById("courseExistsUpdate");
+  const open = document.getElementById("courseExistsOpen");
+  const cancel = document.getElementById("courseExistsCancel");
+  const close = document.getElementById("courseExistsX");
+  update.hidden = !canUpdate;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (action) => {
+      if (settled) return;
+      settled = true;
+      update.removeEventListener("click", onUpdate);
+      open.removeEventListener("click", onOpen);
+      cancel.removeEventListener("click", onCancelClick);
+      close.removeEventListener("click", onCancelClick);
+      dlg.removeEventListener("cancel", onCancel);
+      dlg.removeEventListener("close", onClose);
+      if (dlg.open) dlg.close();
+      const course = courses.find((item) => item.id === Number(select.value));
+      resolve(action && course ? { action, course } : null);
+    };
+    const onUpdate = () => finish("update");
+    const onOpen = () => finish("open");
+    const onCancelClick = () => finish(null);
+    const onCancel = (event) => { event.preventDefault(); finish(null); };
+    const onClose = () => finish(null);
+    update.addEventListener("click", onUpdate);
+    open.addEventListener("click", onOpen);
+    cancel.addEventListener("click", onCancelClick);
+    close.addEventListener("click", onCancelClick);
+    dlg.addEventListener("cancel", onCancel);
+    dlg.addEventListener("close", onClose);
+    dlg.showModal();
+  });
 }
 
 function askImportPrompt(data) {

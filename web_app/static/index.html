@@ -73,6 +73,7 @@
         <button type="button" id="saveStatus" data-state="saved" aria-live="polite">已保存</button>
         <p class="hint">修改会自动保存。每个课程单独保存开课信息、占比、对应关系表、成绩表和导出文件。</p>
       </div>
+      <p id="syllabusVersionHint" class="hint" hidden></p>
       <p id="registerBanner" class="banner ok" hidden></p>
     </section>
 
@@ -354,6 +355,21 @@
         <footer class="dlg-foot">
           <button type="button" class="secondary" id="confirmNo">取消</button>
           <button type="button" id="confirmYes">确定导入</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog class="dlg" id="dlgCourseExists" aria-labelledby="dlgCourseExistsTitle">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgCourseExistsTitle">已有这门课程</h2><button type="button" class="dlg-x" id="courseExistsX" aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <p id="courseExistsMessage"></p>
+          <label class="field" id="courseExistsSelectWrap">已有课程<select id="courseExistsSelect"></select></label>
+          <p class="hint" id="courseExistsAdvice"></p>
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" id="courseExistsCancel">取消</button>
+          <button type="button" class="secondary" id="courseExistsOpen">打开已有课程</button>
+          <button type="button" id="courseExistsUpdate">用新大纲更新</button>
         </footer>
       </form>
     </dialog>
