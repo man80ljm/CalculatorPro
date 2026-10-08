@@ -55,6 +55,7 @@ let courseId = null;
 let courseFiles = [];
 let terms = [];
 let currentTermId = null;
+let materialsRequest = 0;
 let wizard = null;
 let importedHeadcount = 0;
 let lastRegisterFile = null;
@@ -767,31 +768,118 @@ function renderAll() {
 }
 
 function renderFiles() {
-  const root = document.getElementById("savedFiles");
-  root.innerHTML = "";
   const grade = courseFiles.find((file) => file.kind === "grade");
   const previous = courseFiles.find((file) => file.kind === "previous");
   document.getElementById("fileName").textContent = grade ? `已保存：${grade.original_name}` : "尚未导入成绩表";
   document.getElementById("prevName").textContent = previous
     ? `已保存：${previous.original_name}`
     : "导入新学期成绩时会自动读取上一学期达成度；也可手动上传覆盖。没有上一学期或不曾计算则为 —";
-  const more = document.getElementById("filesMore");
-  if (!courseFiles.length) {
-    root.append(el("li", { class: "hint", text: "还没有文件" }));
-    more.hidden = true;
-    updateSummaries();
+  updateSummaries();
+  if (document.getElementById("dlgFiles").open) loadMaterials();
+}
+
+function materialDate(value) {
+  return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "生成时间未记录";
+}
+
+function materialDownload(file, text = "下载") {
+  const button = el("button", { type: "button", class: text === "下载本学期资料包" ? "" : "secondary small", text });
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await downloadSaved(file); } finally { button.disabled = false; }
+  });
+  return button;
+}
+
+function materialFileGroups(files) {
+  const root = el("div", { class: "material-groups" });
+  const groups = [
+    ["报告文档", (file) => /\.docx$/i.test(file.original_name)],
+    ["统计表格", (file) => /\.xlsx$/i.test(file.original_name)],
+    ["其他文件", (file) => !/\.(docx|xlsx)$/i.test(file.original_name)],
+  ];
+  groups.forEach(([title, matches]) => {
+    const members = files.filter(matches).sort((a, b) => a.original_name.localeCompare(b.original_name, "zh-CN", { numeric: true }));
+    if (!members.length) return;
+    const list = el("ul", { class: "file-list" });
+    members.forEach((file) => list.append(el("li", {}, [
+      el("div", { class: "material-file-name" }, [
+        el("span", { text: file.original_name }),
+        el("small", { class: "hint", text: materialDate(file.created_at) }),
+      ]), materialDownload(file),
+    ])));
+    root.append(el("p", { class: "dlg-section", text: title }), list);
+  });
+  return root;
+}
+
+function materialFold(title, body) {
+  return el("details", { class: "material-fold" }, [el("summary", { text: title }), body]);
+}
+
+function renderMaterials(data) {
+  const root = document.getElementById("savedFiles");
+  root.replaceChildren();
+  document.getElementById("dlgFilesTitle").textContent = `${data.course_name} · 课程资料`;
+  if (!data.terms.length) {
+    root.append(el("p", { class: "hint", text: "还没有学期资料，请先导入成绩登记表。" }));
     return;
   }
-  const visible = showAllFiles ? courseFiles : courseFiles.slice(0, FILES_PREVIEW);
-  visible.forEach((file) => {
-    const button = el("button", { type: "button", class: "secondary", text: "下载" });
-    button.addEventListener("click", () => downloadSaved(file));
-    const label = el("span", { text: `${file.original_name}（${KIND_LABELS[file.kind] || file.kind}）` });
-    root.append(el("li", {}, [label, button]));
+  data.terms.forEach((term) => {
+    const card = el("section", { class: "material-term", "data-term-id": String(term.id) });
+    const heading = el("div", { class: "material-heading" }, [el("h3", { text: term.label })]);
+    if (Number(term.id) === Number(currentTermId)) heading.append(el("span", { class: "material-badge", text: "当前学期" }));
+    card.append(heading);
+    const detail = [term.class_name, term.student_count ? `上课 ${term.student_count} 人` : ""].filter(Boolean).join(" · ");
+    if (detail) card.append(el("p", { class: "hint", text: detail }));
+    const latest = term.versions[0];
+    if (latest) {
+      const label = latest.kind === "report" ? "AI 分析报告与统计资料" : "统计资料";
+      card.append(el("p", { class: "material-version-note", text: `最近生成：${materialDate(latest.archive.created_at)} · ${label}` }));
+      card.append(el("div", { class: "material-package" }, [
+        el("span", { text: term.download_name }), materialDownload(latest.archive, "下载本学期资料包"),
+      ]));
+      if (latest.files.length) card.append(materialFold(`查看单个文件（${latest.files.length}）`, materialFileGroups(latest.files)));
+      if (term.versions.length > 1) {
+        const history = el("div", { class: "material-history" });
+        term.versions.slice(1).forEach((version, index) => {
+          const item = el("div", { class: "material-history-item" }, [
+            el("div", { class: "material-package" }, [
+              el("span", { text: `第 ${term.versions.length - index - 1} 版 · ${materialDate(version.archive.created_at)} · ${version.kind === "report" ? "含 AI 分析报告" : "统计资料"}` }),
+              materialDownload(version.archive, "下载这一版"),
+            ]),
+          ]);
+          if (version.files.length) item.append(materialFold("查看这一版的单个文件", materialFileGroups(version.files)));
+          history.append(item);
+        });
+        card.append(materialFold(`查看历史版本（${term.versions.length - 1}）`, history));
+      }
+    } else {
+      card.append(el("p", { class: "hint", text: "本学期尚未生成资料包，完成计算或生成报告后即可下载。" }));
+    }
+    if (term.source_files.length) card.append(materialFold("查看导入资料和模板", materialFileGroups(term.source_files)));
+    if (term.other_files.length) card.append(materialFold(`其他已保存文件（${term.other_files.length}）`, materialFileGroups(term.other_files)));
+    root.append(card);
   });
-  more.hidden = courseFiles.length <= FILES_PREVIEW;
-  more.textContent = showAllFiles ? "收起" : `显示全部（${courseFiles.length}）`;
-  updateSummaries();
+}
+
+async function loadMaterials() {
+  const wantedCourse = courseId;
+  const requestId = ++materialsRequest;
+  const root = document.getElementById("savedFiles");
+  root.replaceChildren(el("p", { class: "hint", text: "正在读取各学期资料…" }));
+  try {
+    const response = await api(`/api/courses/${wantedCourse}/materials`);
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    if (requestId !== materialsRequest || courseId !== wantedCourse) return;
+    renderMaterials(data);
+  } catch (err) {
+    if (requestId !== materialsRequest || courseId !== wantedCourse) return;
+    const retry = el("button", { type: "button", class: "secondary", text: "重新读取" });
+    retry.addEventListener("click", loadMaterials);
+    root.replaceChildren(el("p", { class: "hint", text: err.message === "未登录" ? "请重新登录" : "资料读取失败，请重试。" }), retry);
+  }
 }
 
 async function downloadSaved(file) {
@@ -991,7 +1079,6 @@ function applyCoursePayload(data) {
     registerBanner.hidden = true;
     registerBanner.textContent = "";
   }
-  showAllFiles = false;
   renderTerms();
   renderAll();
   renderFiles();
@@ -1433,10 +1520,7 @@ document.getElementById("reportBtn").addEventListener("click", () => {
 
 /* ---------- 主界面按钮 + 弹窗（对应桌面版 ui_app 的主窗口和各对话框） ---------- */
 const RESULT_PREFIX = "calculatorpro.result.";
-const FILES_PREVIEW = 6;
-const KIND_LABELS = { grade: "成绩表", previous: "上一学年", template: "模板", output: "导出", report: "AI 报告" };
 const RATIO_LINKS = [["平时考核", "平时"], ["期中考核", "期中"], ["期末考核", "期末"]];
-let showAllFiles = false;
 let summaryTimer = null;
 let dialogSnapshot = null;
 let aiEnabled = false;
@@ -1540,7 +1624,7 @@ function renderResultCard() {
   const card = document.getElementById("resultCard");
   card.innerHTML = "";
   const data = loadStoredResult();
-  const filesBtn = el("button", { type: "button", class: "ghost small", text: `已保存的文件（${courseFiles.length}）` });
+  const filesBtn = el("button", { type: "button", class: "ghost small", text: "查看各学期资料" });
   filesBtn.addEventListener("click", () => openDialog("dlgFiles"));
   card.dataset.state = !courseId ? "none" : data && data.stale ? "stale" : data ? "ready" : "empty";
   card.dataset.termId = currentTermId ? String(currentTermId) : "";
@@ -1679,7 +1763,7 @@ function openDialog(id) {
   if (dlg.hasAttribute("data-needs-course") && !courseId) return showResult("请先新建或选择课程文件夹", true);
   if (id === "dlgRatio") renderRatioFields();
   if (id === "dlgResult") renderResultView();
-  if (id === "dlgFiles") renderFiles();
+  if (id === "dlgFiles") loadMaterials();
   dialogSnapshot = snapshot();
   dlg.showModal();
   const first = dlg.querySelector(".dlg-body input, .dlg-body textarea, .dlg-body select, .dlg-body button");
@@ -1735,10 +1819,6 @@ function bindDialogs() {
     dlg.addEventListener("click", (event) => {
       if (event.target === dlg) closeDialog(dlg, false);
     });
-  });
-  document.getElementById("filesMore").addEventListener("click", () => {
-    showAllFiles = !showAllFiles;
-    renderFiles();
   });
   const refresh = () => {
     clearTimeout(summaryTimer);

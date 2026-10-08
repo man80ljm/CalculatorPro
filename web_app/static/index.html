@@ -384,13 +384,12 @@
         </footer>
       </form>
     </dialog>
-    <dialog class="dlg" id="dlgFiles" aria-labelledby="dlgFilesTitle">
+    <dialog class="dlg dlg-wide" id="dlgFiles" aria-labelledby="dlgFilesTitle" data-needs-course>
       <form method="dialog" class="dlg-inner">
-        <header class="dlg-head"><h2 id="dlgFilesTitle">本课程已保存的文件</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <header class="dlg-head"><h2 id="dlgFilesTitle">课程资料</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
         <div class="dlg-body">
-          <ul class="file-list" id="savedFiles"></ul>
-          <button type="button" class="ghost small" id="filesMore" hidden>显示全部</button>
-          <p class="hint">成绩表、模板和导出结果都留在这个课程文件夹里，之后可以再次下载。</p>
+          <p class="hint">按学期查找资料。下载最新资料包，或展开查看单个文件和历史版本。</p>
+          <div class="term-materials" id="savedFiles" aria-live="polite"></div>
         </div>
         <footer class="dlg-foot">
 

@@ -176,13 +176,16 @@ uvicorn web_app.app:app --host 127.0.0.1 --port 18090
 5. 「计算达成度」查看人数、平均分和各目标达成度。
 6. 「导出 xlsx / docx」下载统计表压缩包（成绩明细、表 1 至表 5），并留在课程文件夹里。
 7. 「生成 AI 分析报告」在密钥已配置时下载表 6 和拼接后的总报告。上一学年达成度表可以先导入。没有上学年数据时不做同比，评价表该列显示「—」。有数据时按实际数值对比。
-8. 之后在任意电脑登录，打开同一课程，即可再次下载这些文件。
+8. 之后在任意电脑登录，打开同一课程，点击「查看各学期资料」。每个学期默认显示最新资料包，单个文件、导入资料和历史版本可展开查看；查找或下载旧学期的资料不会切换正在编辑的学期。
+
+资料包统一使用「课程名_2026-2027学年_第1学期.zip」的简短名称，班级和生成时间显示在页面上。每次成功计算、导出或生成报告保存一个独立版本；新版资料包包含本次生成的文档，以及「导入资料」中的本次成绩表和上一轮达成度表（如有）。旧压缩包保留原有内容，下载时使用简短名称，旧单文件仍能下载。生成批次保存在 `file_batches` 表中，启动时只补建新表，不修改既有表结构。
 
 主要接口（除注册、登录和健康检查外，都需要登录 Cookie）：
 
 - `POST /api/register`、`POST /api/login`、`POST /api/logout`、`POST /api/password`
 - `GET/POST /api/courses`，`GET/PATCH/DELETE /api/courses/{id}`
 - `GET/POST /api/courses/{id}/files`，`GET /api/courses/{id}/files/{file_id}`
+- `GET /api/courses/{id}/materials`：查看本课程所有学期的资料、生成版本与下载入口
 - `POST /api/courses/{id}/template`：按课程设置生成模板并保存
 - `POST /api/courses/{id}/calculate`：用已保存或随请求上传的成绩计算
 - `POST /api/courses/{id}/export`：导出 xlsx/docx 压缩包并保存
