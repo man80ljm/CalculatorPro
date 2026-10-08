@@ -3,10 +3,20 @@ ReportBuilder - 用于将多个Word文档拼接到模板中
 """
 import os
 import glob
+import sys
 from docx import Document
 from copy import deepcopy
 from datetime import datetime
 from utils import get_outputs_dir
+
+
+def _log(message=""):
+    """日志适应当前控制台编码，不能因特殊字符阻断报告合并。"""
+    text = str(message)
+    encoding = getattr(sys.stdout, "encoding", None)
+    if encoding:
+        text = text.encode(encoding, errors="backslashreplace").decode(encoding)
+    print(text)
 
 
 class ReportBuilder:
@@ -103,7 +113,7 @@ class ReportBuilder:
         # 1. 直接精确匹配
         direct_path = os.path.join(outputs_dir, prefix_pattern)
         if os.path.exists(direct_path):
-            print(f"    [精确匹配] {prefix_pattern}")
+            _log(f"    [精确匹配] {prefix_pattern}")
             return direct_path
         
         # 2. 提取数字前缀（如 "1"）和主要内容（如 "课程基本信息表"）
@@ -123,7 +133,7 @@ class ReportBuilder:
             variant = f"{number}{sep}{main_text}.docx"
             variant_path = os.path.join(outputs_dir, variant)
             if os.path.exists(variant_path):
-                print(f"    [变体匹配] {variant}")
+                _log(f"    [变体匹配] {variant}")
                 return variant_path
         
         # 4. 使用通配符模糊匹配（匹配以数字开头的文件）
@@ -137,7 +147,7 @@ class ReportBuilder:
             full_pattern = os.path.join(outputs_dir, pattern)
             matches = glob.glob(full_pattern)
             if matches:
-                print(f"    [模糊匹配] 模式: {pattern}, 找到: {os.path.basename(matches[0])}")
+                _log(f"    [模糊匹配] 模式: {pattern}, 找到: {os.path.basename(matches[0])}")
                 return matches[0]
         
         # 5. 最后的尝试：只匹配数字开头
@@ -149,7 +159,7 @@ class ReportBuilder:
                 basename = os.path.basename(match)
                 # 排除包含时间戳的文件（如 20260130_223114）
                 if not re.search(r'\d{8}_\d{6}', basename):
-                    print(f"    [回退匹配] {basename}")
+                    _log(f"    [回退匹配] {basename}")
                     return match
         
         return None
@@ -159,17 +169,17 @@ class ReportBuilder:
         # 获取outputs目录（统一到应用根目录）
         outputs_dir = get_outputs_dir()
         
-        print(f"\n{'='*60}")
-        print(f"[ReportBuilder] 查找文档目录: {outputs_dir}")
-        print(f"[ReportBuilder] 目录存在: {os.path.exists(outputs_dir)}")
+        _log(f"\n{'='*60}")
+        _log(f"[ReportBuilder] 查找文档目录: {outputs_dir}")
+        _log(f"[ReportBuilder] 目录存在: {os.path.exists(outputs_dir)}")
         
         if os.path.exists(outputs_dir):
             files = os.listdir(outputs_dir)
-            print(f"[ReportBuilder] 找到 {len(files)} 个文件:")
+            _log(f"[ReportBuilder] 找到 {len(files)} 个文件:")
             for f in files:
                 if f.endswith('.docx'):
-                    print(f"  - {f}")
-        print(f"{'='*60}\n")
+                    _log(f"  - {f}")
+        _log(f"{'='*60}\n")
         
         # 定义要插入的文档（使用下划线格式，匹配函数会智能处理）
         doc_mappings = {
@@ -186,29 +196,29 @@ class ReportBuilder:
         for i, para in enumerate(doc.paragraphs):
             for placeholder, prefix in doc_mappings.items():
                 if placeholder in para.text:
-                    print(f"[占位符 {placeholder}]")
-                    print(f"  查找模式: {prefix}")
+                    _log(f"[占位符 {placeholder}]")
+                    _log(f"  查找模式: {prefix}")
                     # 使用智能匹配查找文档
                     doc_path = self._find_doc_by_prefix(outputs_dir, prefix)
                     filename = os.path.basename(doc_path) if doc_path else f"{prefix}"
                     paragraphs_to_process.append((i, para, placeholder, doc_path, filename))
                     
                     if doc_path:
-                        print(f"  ✓ 找到文件: {filename}")
+                        _log(f"  ✓ 找到文件: {filename}")
                     else:
-                        print(f"  ✗ 未找到文件")
-                    print()
+                        _log(f"  ✗ 未找到文件")
+                    _log()
         
         # 从后往前处理（避免插入导致索引变化）
         for i, para, placeholder, doc_path, filename in reversed(paragraphs_to_process):
             if doc_path and os.path.exists(doc_path):
-                print(f"→ 插入文档: {filename}")
+                _log(f"→ 插入文档: {filename}")
                 # 清空占位符段落
                 para.clear()
                 # 插入文档内容
                 self._insert_document_content(doc, para, doc_path)
             else:
-                print(f"→ 警告: 跳过缺失文档 {filename}")
+                _log(f"→ 警告: 跳过缺失文档 {filename}")
                 para.text = f"[缺失文档: {filename}]"
     
     def _insert_document_content(self, target_doc, insert_point_para, source_doc_path):
@@ -235,14 +245,14 @@ class ReportBuilder:
                 main_body.insert(insert_index + offset, new_element)
                 offset += 1
             
-            print(f"  ✓ 成功插入 {offset-1} 个元素")
+            _log(f"  ✓ 成功插入 {offset-1} 个元素")
             
             # 添加一个空段落作为分隔
             separator = target_doc.add_paragraph()._element
             main_body.insert(insert_index + offset, separator)
             
         except Exception as e:
-            print(f"  ✗ 插入失败: {e}")
+            _log(f"  ✗ 插入失败: {e}")
             import traceback
             traceback.print_exc()
             # 在出错位置插入错误提示
@@ -258,4 +268,4 @@ class ReportBuilder:
 
 # 测试代码
 if __name__ == '__main__':
-    print("ReportBuilder 模块已加载")
+    _log("ReportBuilder 模块已加载")
