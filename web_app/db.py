@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import UniqueConstraint, DateTime, ForeignKey, Integer, String, Text, create_engine, event, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
@@ -53,11 +53,13 @@ def get_engine() -> Engine:
     if _engine is not None:
         _engine.dispose()
     if url.startswith("sqlite"):
-        engine = create_engine(
-            url,
-            connect_args={"check_same_thread": False, "timeout": 30},
-            poolclass=StaticPool,
-        )
+        parsed = make_url(url)
+        options = {"connect_args": {"check_same_thread": False, "timeout": 30}}
+        # 内存库需要共享连接才能保留数据；文件库让每个并行事务独立借用连接。
+        # StaticPool 用在文件库会让报告线程互相提交/回滚，甚至丢失文件记录。
+        if parsed.database in (None, "", ":memory:") or parsed.query.get("mode") == "memory":
+            options["poolclass"] = StaticPool
+        engine = create_engine(url, **options)
 
         @event.listens_for(engine, "connect")
         def _enable_sqlite_fk(connection, _record):  # noqa: ANN001
