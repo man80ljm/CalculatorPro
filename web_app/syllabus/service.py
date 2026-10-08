@@ -43,8 +43,8 @@ def _register_bundle(filename: str, data: bytes) -> tuple[dict | None, str]:
     suffix = suffix_of(filename)
     if suffix == ".doc":
         raise ServiceError(DOC_MESSAGE)
-    if suffix not in {".pdf", ".xlsx", ".xls"}:
-        raise ServiceError("成绩登记表只接受 .xlsx、.xls 或带文字的 PDF。")
+    if suffix not in {".pdf", ".xlsx", ".xls", ".docx"}:
+        raise ServiceError("成绩登记表支持 Excel（.xlsx、.xls）、Word（.docx）或带文字的 PDF。")
     parsed = parse_register(filename, data)
     safe = markdown_for_ai(parsed)
     if still_has_roster(safe):

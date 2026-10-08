@@ -100,13 +100,10 @@ def test_program_rules_override_the_model():
     }
     draft = build_draft(_ai(), SYLLABUS, "课程性质：专业限选课\n任课教师：黄老师", register)
     nature = draft["fields"]["course_type"]
-    assert nature["status"] == "需手填"
-    assert nature["value"] == ""
-    labels = [item["label"] for item in nature["candidates"]]
-    assert "大纲：专业拓展课程" in labels
-    assert "大纲：选修" in labels
-    assert "大纲：专业拓展课程/选修" in labels
-    assert "成绩登记表：专业限选课" in labels
+    assert nature["status"] == "已填"
+    assert nature["value"] == "专业限选课"
+    assert nature["source"] == "成绩登记表·课程性质"
+    assert nature["candidates"] == []
     for key in ("teacher", "major", "school_year_term", "class_name", "student_count", "exam_count", "year_start"):
         assert draft["fields"][key]["value"] == ""
         assert draft["fields"][key]["status"] == "需手填"
@@ -125,14 +122,16 @@ def test_program_rules_override_the_model():
     assert draft["relation"]["ok"] is True
 
 
-def test_table_cells_become_course_nature_candidates():
+def test_table_category_and_register_nature_are_filled_automatically():
     from web_app.syllabus.rules import course_type_field, major_field
 
     syllabus = "| 课程编码 |  | 适用专业 | 数字媒体艺术 |  |\n| 课程模块 | 专业拓展课程 | 课程类别 | 选修 |  |"
     nature = course_type_field(syllabus, "", {"course_type": "专业限选课"})
-    labels = [item["label"] for item in nature["candidates"]]
-    assert labels == ["大纲：专业拓展课程", "大纲：选修", "大纲：专业拓展课程/选修", "成绩登记表：专业限选课"]
-    assert nature["status"] == "需手填"
+    assert nature["value"] == "专业限选课"
+    assert nature["status"] == "已填"
+    from_syllabus = course_type_field(syllabus, "", None)
+    assert from_syllabus["value"] == "选修"
+    assert from_syllabus["source"] == "大纲·课程类别"
     major = major_field(syllabus, "", None, {})
     assert major["status"] == "已填"
     assert major["value"] == "数字媒体艺术"
@@ -248,7 +247,7 @@ def test_extract_uses_filled_only_and_retries_once(monkeypatch):
     draft = extract_draft("大纲.docx", buffer.getvalue())
     assert calls["n"] == 2
     assert draft["meta"]["calls"] == 2
-    assert draft["fields"]["course_type"]["value"] == ""
+    assert draft["fields"]["course_type"]["value"] == "选修"
     assert draft["fields"]["course_name"]["value"] == "2D游戏引擎"
     assert "sk-test" not in str(draft)
 

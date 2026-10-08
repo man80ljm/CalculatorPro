@@ -107,25 +107,37 @@ def _labeled_values(text: str, label: str) -> list[str]:
     return unique
 
 
+def _opening_course_category(syllabus_text: str) -> str:
+    """按阅读顺序读开头基本信息中的课程类别，不混入课程模块或正文。"""
+    opening = re.split(r"(?m)^\s*(?:二[、.．]|2[、.．]|第二部分)", syllabus_text or "", maxsplit=1)[0]
+    missing = {"", "无", "需手填", "未填写", "—", "-"}
+    for line in opening.splitlines():
+        if "|" in line:
+            cells = [cell.strip() for cell in line.split("|")]
+            for index, cell in enumerate(cells[:-1]):
+                if re.sub(r"\s+", "", cell).rstrip("：:") != "课程类别":
+                    continue
+                value = cells[index + 1].strip()
+                if value not in missing:
+                    return value
+        else:
+            match = re.search(r"课\s*程\s*类\s*别[ \t]*[：:][ \t]*(\S+)", line)
+            if match and match.group(1) not in missing:
+                return match.group(1)
+    return ""
+
+
 def course_type_field(syllabus_text: str, register_text: str, register: dict | None) -> dict:
-    candidates: list[dict] = []
-    modules = _labeled_values(syllabus_text, "课程模块")
-    categories = _labeled_values(syllabus_text, "课程类别")
-    for value in modules + categories + _labeled_values(syllabus_text, "课程性质"):
-        _add_candidate(candidates, f"大纲：{value}", value)
-    if modules and categories:
-        combined = f"{modules[0]}/{categories[0]}"
-        _add_candidate(candidates, f"大纲：{combined}", combined)
-    natures = []
-    if register and register.get("course_type"):
-        natures.append(register["course_type"])
-    natures.extend(_scan(_NATURE, register_text))
-    for value in natures:
-        _add_candidate(candidates, f"成绩登记表：{value}", value)
-    reason = "课程性质不自动填入，请点选大纲或成绩登记表中的写法"
-    if not candidates:
-        reason = "文档里没有课程模块、课程类别或课程性质"
-    return field("", "需手填", reason=reason, candidates=candidates)
+    nature = str((register or {}).get("course_type") or "").strip()
+    if not nature and register is None:
+        match = re.search(r"课程性质[ \t]*[：:][ \t]*(?![^\s:：|]*[：:])([^\s:：|]+)", register_text or "")
+        nature = match.group(1) if match else ""
+    if nature:
+        return field(nature, "已填", "成绩登记表·课程性质")
+    category = _opening_course_category(syllabus_text)
+    if category:
+        return field(category, "已填", "大纲·课程类别")
+    return field("", "需手填", reason="大纲开头的基本信息表没有课程类别，请填写课程性质")
 
 
 def teacher_field(syllabus_text: str, register_text: str, register: dict | None, ai_item) -> dict:
@@ -329,7 +341,7 @@ def build_draft(ai: dict, syllabus_text: str, register_text: str, register: dict
         if key == "credits" and chosen["status"] != "已填" and register and register.get("credits"):
             chosen = field(str(register["credits"]), "已填", "成绩登记表")
         fields[key] = chosen
-    fields["course_type"] = course_type_field(syllabus_text, register_text, register)
+    fields["course_type"] = course_type_field(matrix_text if matrix_text is not None else syllabus_text, register_text, register)
     # 教师、专业、班级、学年学期和人数随每次登记表变化，不从大纲写进课程。
     for key in TERM_KEYS:
         fields[key] = field("", "需手填", reason=TERM_LATER_REASON)

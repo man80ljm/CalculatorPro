@@ -104,6 +104,9 @@ def apply_parsed_register(db, course, term, parsed: dict, *, confirmed: bool, us
 
     basic = dict(settings.get("course_basic_info") or {})
     opened = dict(settings.get("course_open_info") or {})
+    # 登记表有课程性质时优先于大纲；缺失时保留现有课程性质。
+    if parsed.get("course_type"):
+        basic["course_type"] = put(parsed["course_type"], "课程性质")
     # 登记表是这一学期的事实来源：有值就覆盖，不再留「未覆盖」冲突。
     if parsed.get("year_start"):
         opened["year_start"] = put(parsed["year_start"], "学年起")

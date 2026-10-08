@@ -15,7 +15,7 @@ _TERM = re.compile(r"(\d{4})\s*[-–—]\s*(\d{4})\s*学年\s*第\s*([12])\s*学
 _LABELED = {
     "course_name": re.compile(r"课程名称\s*[：:]\s*(\S+)"),
     "course_code": re.compile(r"课程代码\s*[：:]\s*([A-Za-z0-9]+)"),
-    "course_type": re.compile(r"课程性质\s*[：:]\s*(\S+)"),
+    "course_type": re.compile(r"课\s*程\s*性\s*质[ \t]*[：:][ \t]*(?![^\s:：|]*[：:])([^\s:：|]+)"),
     "college": re.compile(r"开课学院\s*[：:]\s*(\S+)"),
     "teacher": re.compile(r"任课教师\s*[：:]\s*(\S+)"),
     "credits": re.compile(r"学\s*分\s*[：:]\s*(\d+(?:\.\d+)?)"),
