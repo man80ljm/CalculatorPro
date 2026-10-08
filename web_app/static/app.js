@@ -1813,6 +1813,9 @@ function bindDialogs() {
     button.addEventListener("click", () => openDialog(button.dataset.open));
   });
   document.querySelectorAll("dialog.dlg").forEach((dlg) => {
+    dlg.setAttribute("closedby", "closerequest");
+    const form = dlg.querySelector("form");
+    if (form) form.addEventListener("submit", (event) => event.preventDefault());
     dlg.addEventListener("cancel", (event) => {
       event.preventDefault();
       closeDialog(dlg, false);
@@ -1822,9 +1825,6 @@ function bindDialogs() {
     });
     const save = dlg.querySelector("[data-save]");
     if (save) save.addEventListener("click", () => saveDialog(dlg));
-    dlg.addEventListener("click", (event) => {
-      if (event.target === dlg) closeDialog(dlg, false);
-    });
   });
   const refresh = () => {
     clearTimeout(summaryTimer);
