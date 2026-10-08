@@ -81,3 +81,28 @@ def test_pdf_repeated_header_on_second_page_keeps_all_students():
     parsed = parse_register("synthetic.pdf", blob.getvalue())
     assert parsed["student_count"] == 3
     assert [student["name"] for student in parsed["students"]] == ["合成甲", "合成乙", "合成丙"]
+
+
+@pytest.mark.parametrize("footer", [
+    ["实考2人"],
+    ["实考 2 人"],
+    ["实考：2人"],
+    ["实考人数：2人"],
+    ["实 考 人 数 ： 2 人"],
+    ["考核人数：2人"],
+    ["实考人数", 2, "人"],
+    ["考核人数", 2, "人"],
+    ["考核人数", 2],
+    ["实考人数：２人"],
+])
+def test_explicit_exam_count_formats(footer):
+    parsed = parse_register("synthetic.xlsx", register_bytes(STUDENTS, footer))
+    assert parsed["student_count"] == 3
+    assert parsed["exam_count"] == 2
+
+
+@pytest.mark.parametrize("text", ["总人数 3人", "实考率：66%", "实考人数：2.5人"])
+def test_non_headcount_text_does_not_supply_exam_count(text):
+    parsed = parse_register("synthetic.xlsx", register_bytes(STUDENTS, [text]))
+    assert parsed["student_count"] == 3
+    assert parsed["exam_count"] == 3

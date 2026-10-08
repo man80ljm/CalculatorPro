@@ -21,11 +21,13 @@ _LABELED = {
     "credits": re.compile(r"学\s*分\s*[：:]\s*(\d+(?:\.\d+)?)"),
     "assess": re.compile(r"考核方式\s*[：:]\s*(\S+)"),
 }
-_EXAM = re.compile(r"实考\s*(\d+)\s*人")
+_EXAM = re.compile(
+    r"(?:实\s*考(?:\s*人\s*数)?|考\s*核\s*人\s*数)\s*[：:]?\s*(\d+)(?![\d.．])\s*人?"
+)
 _TOTAL = re.compile(r"总人数\s*(\d+)\s*人")
 _PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*[%％]")
 _PERCENT_PAREN = re.compile(r"[（(]\s*\d+(?:\.\d+)?\s*[%％]\s*[)）]")
-_STOP = ("成绩统计", "平均成绩", "实考", "缓考", "分数段", "90分", "优秀", "良好", "及格", "不及格")
+_STOP = ("成绩统计", "平均成绩", "实考", "考核人数", "缓考", "分数段", "90分", "优秀", "良好", "及格", "不及格")
 _BUCKET_LABEL = {"usual": "平时", "midterm": "期中", "final": "期末"}
 
 
