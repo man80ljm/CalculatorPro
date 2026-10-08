@@ -194,6 +194,21 @@ class CourseFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class FileBatch(Base):
+    """一次成功生成的资料；旧文件无需迁移，仍可通过原压缩包下载。"""
+
+    __tablename__ = "file_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    term_id: Mapped[int] = mapped_column(ForeignKey("terms.id", ondelete="CASCADE"), index=True)
+    archive_file_id: Mapped[int] = mapped_column(ForeignKey("course_files.id", ondelete="CASCADE"), unique=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    file_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ReportJobEvent(Base):
     """报告任务结束时追加的只读统计。不挂外键，课程删了也留着。"""
 

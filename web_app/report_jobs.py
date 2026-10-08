@@ -254,11 +254,12 @@ def _worker(job: ReportJob, excel: bytes, previous: bytes | None, settings: dict
             from web_app.previous_attainment import record_last_achievement
 
             record_last_achievement(job.user_id, job.course_id, job.term_id, summary.get("achievement") or {})
-            persist(bundle.files + [(bundle.filename, bundle.content)])
+            saved_archive = persist(bundle.files + [(bundle.filename, bundle.content)])
         except Exception as exc:
             _fail(job, "package", exc)
             return
-        _succeed(job, summary, bundle.filename, bundle.content)
+        filename, content = saved_archive or (bundle.filename, bundle.content)
+        _succeed(job, summary, filename, content)
     except Exception as exc:
         stage = current["stage"]
         with _LOCK:

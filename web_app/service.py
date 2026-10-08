@@ -19,6 +19,7 @@ from core_app.report_builder import ReportBuilder
 from io_app.excel_templates import create_forward_template, create_reverse_template
 from utils import get_resource_path, override_outputs_dir
 from web_app.ai_runner import generate_answers
+from web_app.download_names import settings_archive_filename
 
 SPREAD_MAP = {
     "大跨度（14-23分）": "large",
@@ -446,7 +447,7 @@ def run_export(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict,
             }
             if captured is not None:
                 captured.extend(_capture_outputs(outputs_dir))
-            filename = f"{_course_name(settings)}统计表.zip"
+            filename = settings_archive_filename(_course_name(settings), settings)
             return filename, _zip_outputs(outputs_dir), summary
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -548,7 +549,7 @@ def run_report_pipeline(
                 source="成绩文件",
             )
             files = _capture_outputs(outputs_dir)
-            filename = f"{_course_name(settings)}AI分析报告.zip"
+            filename = settings_archive_filename(_course_name(settings), settings)
             content = _zip_outputs(outputs_dir)
             summary = {
                 "mode": settings.get("mode") or "forward",

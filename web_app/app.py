@@ -33,7 +33,9 @@ from web_app.auth import (
     session_is_active,
     start_session,
 )
-from web_app.db import Course, CourseFile, NotFound, Term, User, init_db, ping_db, session_scope, utcnow
+from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow
+from web_app.course_materials import file_public, make_archive, materials_catalog
+from web_app.download_names import archive_filename
 from web_app.terms import (
     apply_term_fields,
     assign_course_settings,
@@ -325,16 +327,7 @@ def _settings_of(course: Course) -> dict:
 
 
 def _file_dict(row: CourseFile) -> dict:
-    created = row.created_at.isoformat(timespec="seconds") if row.created_at else None
-    return {
-        "id": row.id,
-        "course_id": row.course_id,
-        "term_id": row.term_id,
-        "kind": row.kind,
-        "original_name": row.original_name,
-        "size": row.size,
-        "created_at": created,
-    }
+    return file_public(row)
 
 
 def _course_files(db, user_id: int, course_id: int, term_id: int | None = None) -> list[CourseFile]:
@@ -424,21 +417,29 @@ def _job_settings(settings: dict, term) -> dict:
 
 
 def _persist_files(
-    user_id: int, course_id: int, files: list[tuple[str, bytes]], kind: str, term_id: int | None = None
-) -> None:
+    user_id: int, course_id: int, files: list[tuple[str, bytes]], kind: str, term_id: int | None = None,
+    *, excel: bytes | None = None, previous: bytes | None = None,
+) -> tuple[str, bytes] | None:
     if not files:
         return
     with session_scope() as db:
         course = _owned_course(db, user_id, course_id)
-        if term_id:
-            saved_term = int(term_id)
-        else:
-            current = current_term(db, course)
-            if current is None:
-                raise ServiceError("请先导入本学期成绩登记表")
-            saved_term = current.id
-        for name, data in files:
-            save_blob(db, user_id, course_id, name, data, kind, term_id=saved_term)
+        term = db.get(Term, int(term_id)) if term_id else current_term(db, course)
+        if term is None or term.course_id != course.id or term.user_id != user_id:
+            raise NotFound()
+        if kind not in {"output", "report"}:
+            for name, data in files:
+                save_blob(db, user_id, course_id, name, data, kind, term_id=term.id)
+            return None
+        members = [(name, data) for name, data in files if not name.lower().endswith(".zip")]
+        # 一份 ZIP 对应一次生成，同时快照本次实际使用的输入，之后重新导入不会改动旧包。
+        filename = archive_filename(course.name, term.year_start, term.year_end, term.semester, term.school_year_term)
+        content = make_archive(members, excel, previous)
+        ids = [save_blob(db, user_id, course_id, name, data, kind, term_id=term.id).id for name, data in members]
+        archive = save_blob(db, user_id, course_id, filename, content, kind, term_id=term.id)
+        db.add(FileBatch(user_id=user_id, course_id=course_id, term_id=term.id, kind=kind,
+                         archive_file_id=archive.id, file_ids_json=json.dumps(ids)))
+        return filename, content
 
 
 def _browser_logged_in(request: Request) -> bool:
@@ -659,6 +660,15 @@ def create_app() -> FastAPI:
     application.get("/api/courses/{course_id}/files")(list_files)
 
     @_api
+    async def list_materials(course_id: int, request: Request):
+        user_id, _session_id = _identity(request)
+        with session_scope() as db:
+            course = _owned_course(db, user_id, course_id)
+            return JSONResponse(materials_catalog(db, course))
+
+    application.get("/api/courses/{course_id}/materials")(list_materials)
+
+    @_api
     async def upload_course_file(course_id: int, request: Request):
         user_id, _session_id = _identity(request)
         form = await _optional_form(request)
@@ -690,6 +700,12 @@ def create_app() -> FastAPI:
             row = _owned_file(db, user_id, course_id, file_id)
             data = read_blob(row)
             filename = download_filename(row.original_name)
+            if filename.lower().endswith(".zip") and row.kind in {"report", "output"}:
+                course = _owned_course(db, user_id, course_id)
+                term = db.get(Term, row.term_id) if row.term_id else None
+                if term is not None:
+                    filename = archive_filename(course.name, term.year_start, term.year_end,
+                                                term.semester, term.school_year_term)
         return _attachment(filename, data, _media_type(filename))
 
     application.get("/api/courses/{course_id}/files/{file_id}")(download_course_file)
@@ -753,7 +769,7 @@ def create_app() -> FastAPI:
         try:
             settings = await _load_settings(request, user_id, course_id)
             filename, content = await asyncio.to_thread(build_template, settings)
-            _persist_files(user_id, course_id, [(filename, content)], "template")
+            _persist_files(user_id, course_id, [(filename, content)], "template", term_id=settings["term_id"])
         except (NotFound, ServiceError, ValueError, AuthError):
             raise
         except Exception as exc:
@@ -769,10 +785,10 @@ def create_app() -> FastAPI:
             settings, excel, previous = await _load_grade_job(request, user_id, course_id)
             captured: list[tuple[str, bytes]] = []
             summary = await asyncio.to_thread(run_calculation, excel, previous, settings, captured)
-            _persist_files(user_id, course_id, captured, "output")
+            _persist_files(user_id, course_id, captured, "output", term_id=settings["term_id"], excel=excel, previous=previous)
             with session_scope() as db:
                 course = _owned_course(db, user_id, course_id)
-                term = current_term(db, course)
+                term = db.get(Term, settings["term_id"])
                 store_last_achievement(term, summary.get("achievement"))
                 summary["term_id"] = term.id
                 summary["term_label"] = term.label
@@ -792,7 +808,8 @@ def create_app() -> FastAPI:
             settings, excel, previous = await _load_grade_job(request, user_id, course_id)
             captured: list[tuple[str, bytes]] = []
             filename, content, _summary = await asyncio.to_thread(run_export, excel, previous, settings, captured)
-            _persist_files(user_id, course_id, captured + [(filename, content)], "output")
+            filename, content = _persist_files(user_id, course_id, captured + [(filename, content)], "output",
+                                               term_id=settings["term_id"], excel=excel, previous=previous)
         except (NotFound, ServiceError, ValueError, AuthError):
             raise
         except Exception as exc:
@@ -810,7 +827,8 @@ def create_app() -> FastAPI:
             settings, excel, previous = await _load_grade_job(request, user_id, course_id)
             captured: list[tuple[str, bytes]] = []
             filename, content = await asyncio.to_thread(run_ai_report, excel, previous, settings, captured)
-            _persist_files(user_id, course_id, captured + [(filename, content)], "report")
+            filename, content = _persist_files(user_id, course_id, captured + [(filename, content)], "report",
+                                               term_id=settings["term_id"], excel=excel, previous=previous)
         except (NotFound, ServiceError, ValueError, AuthError):
             raise
         except Exception as exc:
@@ -825,12 +843,14 @@ def create_app() -> FastAPI:
         settings, excel, previous = await _load_grade_job(request, user_id, course_id)
         with session_scope() as db:
             course = _owned_course(db, user_id, course_id)
-            term = current_term(db, course)
+            term = db.get(Term, settings["term_id"])
+            if term is None or term.course_id != course.id:
+                raise NotFound()
             term_id = term.id
             meta = {"term_id": term.id, "term_label": term.label or "", "class_name": term.class_name or ""}
 
-        def persist(files: list[tuple[str, bytes]]) -> None:
-            _persist_files(user_id, course_id, files, "report", term_id=term_id)
+        def persist(files: list[tuple[str, bytes]]):
+            return _persist_files(user_id, course_id, files, "report", term_id=term_id, excel=excel, previous=previous)
 
         view = launch_report_job(
             user_id=user_id,
