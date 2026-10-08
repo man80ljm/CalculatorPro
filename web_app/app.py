@@ -32,6 +32,7 @@ from web_app.auth import (
     session_is_active,
     start_session,
 )
+from web_app.course_versions import term_curriculum
 from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow
 from web_app.course_materials import file_public, make_archive, materials_catalog
 from web_app.download_names import archive_filename
@@ -359,7 +360,8 @@ def _course_dict(db, course: Course) -> dict:
     return {
         "id": course.id,
         "name": course.name,
-        "settings": _settings_of(course),
+        "settings": term_curriculum(_settings_of(course), term),
+        "latest_syllabus_version": _settings_of(course).get("syllabus_version", 1),
         "current_term_id": term.id if term is not None else None,
         "current_term": term_public(term, file_count(db, term.id)) if term is not None else None,
         "terms": terms,
@@ -403,9 +405,9 @@ def _latest_bytes(db, user_id: int, course_id: int, kind: str, term_id: int | No
         raise ServiceError("已保存的文件丢失，请重新上传") from exc
 
 
-def _store_settings(course: Course, settings: dict) -> dict:
+def _store_settings(course: Course, settings: dict, term=None) -> dict:
     prepared = absorb_relation_grid(settings, strict=True)
-    assign_course_settings(course, prepared)
+    assign_course_settings(course, prepared, term=term)
     course.updated_at = utcnow()
     return prepared
 
@@ -590,8 +592,8 @@ def create_app() -> FastAPI:
             )
             db.add(course)
             db.flush()
-            create_term(db, course, settings, make_current=True)
             assign_course_settings(course, settings)
+            create_term(db, course, settings, make_current=True)
             return JSONResponse(_course_dict(db, course))
 
     application.post("/api/courses")(create_course)
@@ -618,12 +620,14 @@ def create_app() -> FastAPI:
                 if not isinstance(settings, dict):
                     raise ServiceError("课程设置格式不正确")
                 settings = absorb_relation_grid(settings, strict=False)
+                from web_app.course_versions import freeze_existing_terms
+                freeze_existing_terms(db, course)
                 term = current_term(db, course)
                 if term is None and _term_text_requested(settings):
                     term = create_term(db, course, settings, make_current=True, clear_identity=True)
                 if term is not None:
                     apply_term_fields(term, settings)
-                assign_course_settings(course, settings)
+                assign_course_settings(course, settings, term=term)
             course.updated_at = utcnow()
             return JSONResponse(_course_dict(db, course))
 
@@ -721,7 +725,9 @@ def create_app() -> FastAPI:
                     raise ServiceError("请先导入本学期成绩登记表")
                 if isinstance(settings_raw, str):
                     settings = _parse_settings(settings_raw)
-                    settings = _store_settings(course, settings)
+                    from web_app.course_versions import freeze_existing_terms
+                    freeze_existing_terms(db, course)
+                    settings = _store_settings(course, settings, term=term)
                     apply_term_fields(term, settings)
                 else:
                     settings = _settings_of(course)
@@ -744,7 +750,9 @@ def create_app() -> FastAPI:
                     raise ServiceError("请先导入本学期成绩登记表")
                 if isinstance(settings_raw, str):
                     settings = _parse_settings(settings_raw)
-                    settings = _store_settings(course, settings)
+                    from web_app.course_versions import freeze_existing_terms
+                    freeze_existing_terms(db, course)
+                    settings = _store_settings(course, settings, term=term)
                     apply_term_fields(term, settings)
                 else:
                     settings = _settings_of(course)

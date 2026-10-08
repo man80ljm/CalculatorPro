@@ -74,7 +74,8 @@ def apply_parsed_register(db, course, term, parsed: dict, *, confirmed: bool, us
     requested = str(mode or "auto").strip().lower()
     if requested not in {"auto", "forward", "reverse"}:
         raise ServiceError("导入模式只能是 auto、forward 或 reverse")
-    settings = parse_settings(course.settings_json)
+    from web_app.course_versions import term_curriculum
+    settings = term_curriculum(parse_settings(course.settings_json), term)
     mismatch = register_course_message(settings, course.name, parsed)
     if mismatch and not confirmed:
         raise ServiceError(mismatch, status=409)
@@ -140,7 +141,7 @@ def apply_parsed_register(db, course, term, parsed: dict, *, confirmed: bool, us
     settings["course_basic_info"] = basic
     settings["course_open_info"] = opened
     apply_term_fields(term, settings)
-    assign_course_settings(course, settings)
+    assign_course_settings(course, settings, term=term)
     _replace_term_grade(db, user_id, course.id, term.id, grade_name, workbook)
     course.updated_at = utcnow()
     reason = detection["reason"]
@@ -248,7 +249,8 @@ def import_parsed_register(
         if len(matches) > 1:
             raise ServiceError("该学年学期已有多个班级，登记表没有班级，无法确定要替换哪一条。")
 
-    settings = parse_settings(course.settings_json)
+    from web_app.course_versions import term_curriculum
+    settings = term_curriculum(parse_settings(course.settings_json), matches[0]) if matches else parse_settings(course.settings_json)
     mismatch = register_course_message(settings, course.name, imported)
     if mismatch and not confirmed:
         raise ServiceError(mismatch, status=409)
@@ -267,6 +269,11 @@ def import_parsed_register(
     summary = apply_parsed_register(db, course, term, imported, confirmed=confirmed, user_id=user_id, mode=mode)
     summary["created_term"] = not matches
     summary.update(autofill_previous_from_prior_term(db, user_id, course, term))
+    if summary.get("previous_filled"):
+        prior = next((item for item in terms if item.id == summary.get("prior_term_id")), None)
+        if prior and parse_settings(prior.settings_json).get("syllabus_version", 1) != parse_settings(term.settings_json).get("syllabus_version", 1):
+            summary["warnings"].append("本学期大纲已更新，请核对上一轮达成度是否对应相同课程目标。")
+            summary["consistent"] = False
     return summary
 
 
@@ -371,7 +378,9 @@ def attach(application) -> None:
                 term = next((item for item in list_terms(db, course.id) if item.id == int(term_id)), None)
             if term is None:
                 raise NotFound()
-            settings = parse_settings(course.settings_json)
+            from web_app.course_versions import freeze_existing_terms, term_curriculum
+            freeze_existing_terms(db, course)
+            settings = term_curriculum(parse_settings(course.settings_json), term)
             basic = dict(settings.get("course_basic_info") or {})
             opened = dict(settings.get("course_open_info") or {})
             for key in ("year_start", "year_end", "semester", "teacher"):
@@ -393,7 +402,7 @@ def attach(application) -> None:
             settings["course_open_info"] = opened
             apply_term_fields(term, settings)
             if term.is_current:
-                assign_course_settings(course, settings)
+                assign_course_settings(course, settings, term=term)
             course.updated_at = utcnow()
             return JSONResponse(_course_dict(db, course))
 
@@ -528,6 +537,8 @@ def attach(application) -> None:
             db.add(course)
             db.flush()
             assign_course_settings(course, settings)
+            from web_app.course_versions import freeze_existing_terms
+            freeze_existing_terms(db, course)
             grade_import = None
             grade_import_error = ""
             # 前端不再上传登记表。仍收到文件时走和主页一样的匹配/新建，不先占一条空学期。
@@ -545,6 +556,21 @@ def attach(application) -> None:
             return JSONResponse(payload)
 
     application.post("/api/courses/from-syllabus")(from_syllabus)
+
+    @_api
+    async def update_syllabus_version(course_id: int, request: Request):
+        user_id, _session = _identity(request)
+        body = await _json_body(request)
+        settings, _extra = settings_from_wizard(body)
+        settings = absorb_relation_grid(settings, strict=True)
+        from web_app.course_versions import new_syllabus_version
+        with session_scope() as db:
+            course = _owned_course(db, user_id, course_id)
+            new_syllabus_version(db, course, settings, expected_version=body.get("expected_version"))
+            course.updated_at = utcnow()
+            return JSONResponse(_course_dict(db, course))
+
+    application.post("/api/courses/{course_id}/syllabus-version")(update_syllabus_version)
 
     def _form_text(form, key: str) -> str:
         if form is None:

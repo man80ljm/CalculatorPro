@@ -2,7 +2,7 @@
 
 课程 settings_json 只留课程层（名称、目标、关系表等）和各学期可继承的运行参数。
 计算、导出、报告前用当前学期把学期字段合并进一份临时设置，不写回课程。
-关系表、课程目标、毕业要求留在课程上，各学期共用。
+每个学期保存实际使用的大纲设置；新大纲供之后的新学期使用。
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ TERM_BLOB_KEYS = (
 )
 
 # 不放进 TERM_BLOB_KEYS：那一组只在入参出现时才写入，缺了就会被整表丢掉。
-_KEPT_BLOB_KEYS = ("last_achievement", "previous_achievement")
+_KEPT_BLOB_KEYS = ("last_achievement", "previous_achievement", "syllabus_settings", "syllabus_version", "syllabus_version_id")
 
 
 def _as_dict(value: Any) -> dict:
@@ -153,8 +153,21 @@ def without_term_identity(settings: dict) -> dict:
     return stored
 
 
-def assign_course_settings(course: Course, settings: dict) -> None:
-    course.settings_json = json.dumps(without_term_identity(settings), ensure_ascii=False)
+def assign_course_settings(course: Course, settings: dict, *, term: Term | None = None) -> None:
+    from web_app.course_versions import curriculum, SNAPSHOT, VERSION, VERSION_ID
+    latest = parse_settings(course.settings_json)
+    stored = curriculum(settings)
+    number, version_id = latest.get(VERSION, 1), latest.get(VERSION_ID)
+    if term is not None:
+        blob = parse_settings(term.settings_json)
+        number, version_id = blob.get(VERSION, number), blob.get(VERSION_ID, version_id)
+        blob[SNAPSHOT] = stored
+        blob[VERSION], blob[VERSION_ID] = number, version_id
+        term.settings_json = json.dumps(blob, ensure_ascii=False)
+        if version_id != latest.get(VERSION_ID):
+            return
+    stored[VERSION], stored[VERSION_ID] = number, version_id
+    course.settings_json = json.dumps(stored, ensure_ascii=False)
 
 
 def settings_from_term_row(row: dict) -> dict:
@@ -194,7 +207,8 @@ def settings_from_term_row(row: dict) -> dict:
 
 def merge_settings(settings: dict, term: Term) -> dict:
     """计算前把当前学期的身份字段叠进一份临时设置。空学期也覆盖，不用课程层里的旧值。"""
-    merged = json.loads(json.dumps(settings, ensure_ascii=False))
+    from web_app.course_versions import term_curriculum
+    merged = term_curriculum(settings, term)
     basic = dict(_as_dict(merged.get("course_basic_info")))
     open_info = dict(_as_dict(merged.get("course_open_info")))
     open_info["year_start"] = term.year_start or ""
@@ -241,6 +255,7 @@ def term_public(term: Term, file_count: int = 0) -> dict:
         "word_limit": blob.get("word_limit") or 0,
         "noise_config": blob.get("noise_config"),
         "file_count": file_count,
+        "syllabus_version": blob.get("syllabus_version", 1),
     }
 
 
@@ -254,6 +269,8 @@ def _clear_current(db: Session, course_id: int) -> None:
 
 
 def create_term(db: Session, course: Course, settings: dict | None = None, *, make_current: bool = True, clear_identity: bool = False) -> Term:
+    from web_app.course_versions import freeze_existing_terms, curriculum, SNAPSHOT, VERSION, VERSION_ID
+    version = freeze_existing_terms(db, course)
     if make_current:
         _clear_current(db, course.id)
     term = Term(
@@ -264,6 +281,10 @@ def create_term(db: Session, course: Course, settings: dict | None = None, *, ma
         updated_at=utcnow(),
     )
     apply_term_fields(term, settings or parse_settings(course.settings_json), clear_identity=clear_identity)
+    blob = parse_settings(term.settings_json)
+    blob[SNAPSHOT] = curriculum(settings or parse_settings(course.settings_json))
+    blob[VERSION], blob[VERSION_ID] = version.number, version.id
+    term.settings_json = json.dumps(blob, ensure_ascii=False)
     db.add(term)
     db.flush()
     return term
