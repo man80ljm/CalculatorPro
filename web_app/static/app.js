@@ -669,6 +669,12 @@ function syncIdleActions() {
   const reportBtn = document.getElementById("reportBtn");
   const hasGrade = courseFiles.some((file) => file.kind === "grade");
   if (reportBtn) reportBtn.disabled = actionBusy || !hasGrade;
+  const reportHint = document.getElementById("reportHint");
+  if (reportHint) {
+    reportHint.textContent = actionBusy ? "报告正在生成，请稍候…" : !hasCourse
+      ? "请先新建或选择课程，再导入成绩登记表。" : !hasGrade ? "请先导入本学期的成绩登记表。" : "";
+    reportHint.hidden = !reportHint.textContent;
+  }
 }
 
 function setBusy(busy) {

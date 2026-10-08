@@ -10,8 +10,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import UploadFile
@@ -36,6 +35,7 @@ from web_app.auth import (
 from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow
 from web_app.course_materials import file_public, make_archive, materials_catalog
 from web_app.download_names import archive_filename
+from web_app.static_assets import RevalidatedStaticFiles, page_response
 from web_app.terms import (
     apply_term_fields,
     assign_course_settings,
@@ -475,7 +475,7 @@ def create_app() -> FastAPI:
     def login_page(request: Request):
         if _browser_logged_in(request):
             return RedirectResponse("/", status_code=303)
-        return FileResponse(STATIC_DIR / "login.html", media_type="text/html; charset=utf-8")
+        return page_response(STATIC_DIR, "login.html")
 
     @application.post("/api/register")
     async def register(request: Request):
@@ -544,7 +544,7 @@ def create_app() -> FastAPI:
 
     @application.get("/")
     def home():
-        return FileResponse(STATIC_DIR / "index.html", media_type="text/html; charset=utf-8")
+        return page_response(STATIC_DIR, "index.html")
 
     @application.get("/api/ai-status")
     def ai_status_route():
@@ -890,7 +890,7 @@ def create_app() -> FastAPI:
 
     attach(application)
     attach_admin(application)
-    application.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    application.mount("/static", RevalidatedStaticFiles(directory=STATIC_DIR), name="static")
     application.add_middleware(_Guard)
     application.add_middleware(AdminHostMiddleware)
     return application
