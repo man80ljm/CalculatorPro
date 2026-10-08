@@ -2146,7 +2146,8 @@ function showRegisterResult(data) {
   const percents = data.percents || {};
   root.append(el("p", { id: "registerDetect", class: "headcount-alert", text: registerSummary(data) }));
   root.append(el("p", { text: `识别 ${data.student_count} 人，实考 ${data.exam_count || data.student_count} 人。` }));
-  root.append(el("p", { text: `班级：${(data.classes || []).join("、") || "未识别"}` }));
+  root.append(el("p", { text: `上课班级：${data.class_name || (data.classes || []).join("、") || "未识别"}` }));
+  if (data.mixed_classes) root.append(el("p", { class: "hint", text: "多个班级已合并导入，人数按整张成绩表统计。" }));
   root.append(el("p", { text: `平时 ${percentText(percents.usual)}，期中 ${percentText(percents.midterm)}，期末 ${percentText(percents.final)}。` }));
   (data.warnings || []).forEach((item) => {
     const loud = String(item).includes("人数不一致");
@@ -2298,7 +2299,7 @@ async function postRegister(file, extra) {
   body.append("file", file);
   if (options.confirm) body.append("confirm", "1");
   if (options.mode) body.append("mode", options.mode);
-  ["year_start", "year_end", "semester", "class_name"].forEach((key) => {
+  ["year_start", "year_end", "semester"].forEach((key) => {
     if (options[key]) body.append(key, options[key]);
   });
   return api(`/api/courses/${courseId}/grade-register`, { method: "POST", body });
@@ -2309,19 +2310,11 @@ function askImportPrompt(data) {
   const replace = data.code === "replace";
   const needs = data.needs || [];
   const needTerm = needs.includes("term");
-  const needClass = needs.includes("class");
   document.getElementById("importPromptText").textContent = data.detail || "";
   document.getElementById("importTermFields").hidden = replace;
   document.getElementById("importYearStartWrap").hidden = !needTerm;
   document.getElementById("importYearEndWrap").hidden = !needTerm;
   document.getElementById("importSemesterWrap").hidden = !needTerm;
-  document.getElementById("importClassWrap").hidden = !needClass;
-  const select = document.getElementById("importClassSelect");
-  select.innerHTML = "";
-  if (needClass) {
-    select.append(el("option", { value: "", text: "请选择班级" }));
-    (data.classes || []).forEach((name) => select.append(el("option", { value: name, text: name })));
-  }
   document.getElementById("importFillConfirm").hidden = replace;
   document.getElementById("importReplaceYes").hidden = !replace;
   const yes = document.getElementById("importReplaceYes");
@@ -2351,13 +2344,6 @@ function askImportPrompt(data) {
         result.semester = document.getElementById("importSemester").value.trim();
         if (!result.year_start || !result.year_end || !result.semester) {
           document.getElementById("importPromptText").textContent = "请填写学年起、学年止和学期。";
-          return;
-        }
-      }
-      if (needClass) {
-        result.class_name = select.value;
-        if (!result.class_name) {
-          document.getElementById("importPromptText").textContent = "请选择一个班级。";
           return;
         }
       }

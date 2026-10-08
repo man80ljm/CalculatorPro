@@ -201,8 +201,7 @@ button[hidden] { display: none !important; }
 #importTermFields[hidden],
 #importYearStartWrap[hidden],
 #importYearEndWrap[hidden],
-#importSemesterWrap[hidden],
-#importClassWrap[hidden] { display: none !important; }
+#importSemesterWrap[hidden] { display: none !important; }
 
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 

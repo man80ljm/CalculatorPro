@@ -970,7 +970,7 @@ def test_register_creates_replaces_and_adds_another_term(client, monkeypatch):
     assert len(client.get(f"/api/courses/{course_id}").json()["terms"]) == 3
 
 
-def test_multi_class_import_requires_one_class(client):
+def test_multi_class_import_keeps_every_student_and_replaces_same_term(client):
     created = client.post(
         "/api/courses",
         json={"name": "创意手作", "settings": _named_settings("创意手作", "BJ2230005", 0, 0)},
@@ -978,19 +978,29 @@ def test_multi_class_import_requires_one_class(client):
     buffer = io.BytesIO()
     _xlsx_like_handcraft(buffer, 35)
     payload = buffer.getvalue()
-    blocked = _post_register(client, created["id"], payload)
-    assert blocked.status_code == 409
-    body = blocked.json()
-    assert body["code"] == "need_input"
-    assert "class" in body["needs"]
+    imported = _post_register(client, created["id"], payload)
+    assert imported.status_code == 200, imported.text
+    body = imported.json()
+    assert body["student_count"] == body["exam_count"] == 35
+    assert body["class_name"] == "专业任选"
+    assert body["mixed_classes"] is True
     assert set(body["classes"]) == {"23美术教育A", "23数字媒体"}
-    chosen = _post_register(client, created["id"], payload, class_name="23数字媒体")
+    repeated = _post_register(client, created["id"], payload, class_name="23数字媒体")
+    assert repeated.status_code == 409
+    assert repeated.json()["code"] == "replace"
+    assert repeated.json()["term_id"] == body["term_id"]
+    chosen = _post_register(client, created["id"], payload, class_name="23数字媒体", confirm=True)
     assert chosen.status_code == 200, chosen.text
-    assert chosen.json()["student_count"] == 15
+    assert chosen.json()["student_count"] == 35
+    assert chosen.json()["term_id"] == body["term_id"]
+    assert chosen.json()["created_term"] is False
     course = client.get(f"/api/courses/{created['id']}").json()
-    assert course["current_term"]["class_name"] == "23数字媒体"
-    assert course["current_term"]["major"] == "数字媒体"
-    assert course["current_term"]["student_count"] == 15
+    assert course["current_term"]["class_name"] == "专业任选"
+    assert course["current_term"]["major"] == ""
+    assert course["current_term"]["student_count"] == 35
+    _grade, sheet = _grade_sheet(client, created["id"])
+    assert sheet.max_row == 37  # 两行表头，35名学生全部保留。
+    assert [sheet.cell(row, 1).value for row in range(3, 38)] == [f"学生{i}" for i in range(35)]
 
 
 def test_opening_fields_save_onto_the_current_term_only(client):

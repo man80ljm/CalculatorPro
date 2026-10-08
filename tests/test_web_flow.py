@@ -619,7 +619,7 @@ def test_home_mirrors_desktop_buttons_and_dialogs(client):
         "reportBtn", "dlgReport", "reportProgress", "reportStage", "reportDownload", "reportError",
         "calcBtn", "exportBtn", "registerHint", "registerImport",
         "dlgImportTerm", "importYearStart", "importYearEnd", "importSemester",
-        "importClassSelect", "importReplaceYes", "importFillConfirm",
+        "importReplaceYes", "importFillConfirm",
     ]:
         assert f'id="{element_id}"' in page
     assert '<details class="fold" id="reviewSection">' in page
@@ -629,6 +629,8 @@ def test_home_mirrors_desktop_buttons_and_dialogs(client):
     script = client.get("/static/app.js").text
     assert "showModal" in script and "有未保存的修改" in script
     assert "保存失败（点此重试）" in script
+    assert 'id="importClassSelect"' not in page
+    assert "请选择一个班级" not in script
     assert 'id="syllabusRegister"' not in page
     assert "wizardTermHint" in page
     assert "导入成绩登记表时写入该学期" in page
@@ -638,7 +640,7 @@ def test_home_mirrors_desktop_buttons_and_dialogs(client):
     fields_at = page.index('id="importTermFields"')
     footer_at = page.index('id="importFillCancel"')
     fill_block = page[fields_at:footer_at]
-    for element_id in ["importYearStartWrap", "importYearEndWrap", "importSemesterWrap", "importClassWrap"]:
+    for element_id in ["importYearStartWrap", "importYearEndWrap", "importSemesterWrap"]:
         assert element_id in fill_block
     css = client.get("/static/style.css").text
     assert "#importTermFields[hidden]" in css

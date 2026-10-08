@@ -12,7 +12,6 @@ from web_app.grade_register import (
     detect_register_mode,
     forward_workbook,
     headcount_warnings,
-    limit_register_to_class,
     parse_register,
     ratio_warnings,
     register_course_message,
@@ -38,6 +37,8 @@ from web_app.terms import (
     without_term_identity,
 )
 
+
+MIXED_CLASS_NAME = "专业任选"
 
 def _replace_term_grade(db, user_id: int, course_id: int, term_id: int, filename: str, data: bytes):
     """同一学期只保留这一份成绩文件。"""
@@ -123,7 +124,9 @@ def apply_parsed_register(db, course, term, parsed: dict, *, confirmed: bool, us
         if major:
             filled.append("上课专业")
     elif len(classes) > 1:
-        warnings.append("登记表有多个班级：" + "、".join(classes) + "。请选择一个班级后再导入。")
+        basic["class_name"] = put(MIXED_CLASS_NAME, "上课班级")
+        # 混合上课只统计整张表，不从其中一个班级推断上课专业。
+        basic["major"] = ""
     settings["student_count"] = parsed["student_count"]
     basic["student_count"] = str(parsed["student_count"])
     filled.append("上课人数")
@@ -145,6 +148,8 @@ def apply_parsed_register(db, course, term, parsed: dict, *, confirmed: bool, us
         "student_count": parsed["student_count"],
         "exam_count": parsed["exam_count"],
         "classes": parsed["classes"],
+        "class_name": basic.get("class_name", ""),
+        "mixed_classes": len(classes) > 1,
         "percents": parsed["percents"],
         "ratios": ratios,
         "warnings": warnings,
@@ -204,7 +209,7 @@ def import_parsed_register(
     semester: str = "",
     class_name: str = "",
 ) -> dict:
-    """按学年学期和班级匹配学期。没有就新建，有则确认后用登记表覆盖。"""
+    """整表导入，混合班级统一按「专业任选」匹配学期。"""
     from web_app.service import ServiceError
 
     start, end, sem = normalize_term_parts(
@@ -214,31 +219,23 @@ def import_parsed_register(
         parsed.get("school_year_term") or "",
     )
     classes = [str(name).strip() for name in (parsed.get("classes") or []) if str(name).strip()]
-    chosen = str(class_name or "").strip()
+    # 兼容旧客户端的 class_name 参数，但它不再筛选学生。
+    chosen = MIXED_CLASS_NAME if len(classes) > 1 else (classes[0] if classes else "")
     needs = []
     if not (start and end and sem):
         needs.append("term")
-    if len(classes) > 1 and chosen not in classes:
-        needs.append("class")
     if needs:
         detail = []
         if "term" in needs:
             detail.append("登记表没有学年或学期，请补填学年起、学年止和学期")
-        if "class" in needs:
-            detail.append("登记表有多个班级，请选择其中一个")
         raise ServiceError("；".join(detail) + "。", status=409, code="need_input", needs=needs, classes=classes)
 
     match_class = bool(classes)
-    if len(classes) == 1:
-        chosen = classes[0]
-    elif not classes:
-        chosen = ""
-    narrowed = limit_register_to_class(parsed, chosen if match_class else "")
-    narrowed = dict(narrowed)
-    narrowed["year_start"] = start
-    narrowed["year_end"] = end
-    narrowed["semester"] = sem
-    narrowed["school_year_term"] = f"{start}-{end}学年第{sem}学期"
+    imported = dict(parsed)
+    imported["year_start"] = start
+    imported["year_end"] = end
+    imported["semester"] = sem
+    imported["school_year_term"] = f"{start}-{end}学年第{sem}学期"
 
     terms = list_terms(db, course.id)
     if match_class:
@@ -249,7 +246,7 @@ def import_parsed_register(
             raise ServiceError("该学年学期已有多个班级，登记表没有班级，无法确定要替换哪一条。")
 
     settings = parse_settings(course.settings_json)
-    mismatch = register_course_message(settings, course.name, narrowed)
+    mismatch = register_course_message(settings, course.name, imported)
     if mismatch and not confirmed:
         raise ServiceError(mismatch, status=409)
     if matches and not confirmed:
@@ -264,7 +261,7 @@ def import_parsed_register(
         select_term(db, course, term.id)
     else:
         term = create_term(db, course, settings, make_current=True, clear_identity=True)
-    summary = apply_parsed_register(db, course, term, narrowed, confirmed=confirmed, user_id=user_id, mode=mode)
+    summary = apply_parsed_register(db, course, term, imported, confirmed=confirmed, user_id=user_id, mode=mode)
     summary["created_term"] = not matches
     summary.update(autofill_previous_from_prior_term(db, user_id, course, term))
     return summary
