@@ -289,4 +289,4 @@ python -m web_app.migrate_v2 --downgrade --backup-dir ./backups
 
 独立PostgreSQL16预发布环境中使用20个合成账号，每课35人，混合正向/逆向，AI模拟等待3秒；验证计算、导出、报告、跨账号隔离及大纲版本。使用同一成绩表分别在旧镜像和新镜像中计算、导出，达成度与表5一致。正式HTTPS登录后检查新版资源、同名提示、Word格式提示和弹窗外侧误触/Esc行为，页面无脚本异常。
 
-预发布曾在1GB限制下因内存上限退出，即使报告任务已完成也存在风险。因此网页容器上限改为2GB，Docker Compose默认配置同步更新；PostgreSQL仍为512MB。正式服务通过Docker update平滑调整并在Compose中持久保存。真实AI速度和长时间运行容量仍需另测。
+预发布曾在1GB限制下因内存上限退出，即使报告任务已完成也存在风险。因此网页容器上限改为2GB，Docker Compose默认配置同步更新；PostgreSQL仍为512MB。正式服务通过Docker update平滑调整并在Compose中持久保存。2GB配置下20人复测全部完成，应用峰值约1.12GiB；任务完成后的连续健康检查正常，PostgreSQL保存20条成功报告事件、无失败事件。真实AI速度和长时间运行容量仍需另测。
