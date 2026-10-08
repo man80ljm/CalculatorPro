@@ -2,6 +2,7 @@
 import io
 import json
 import os
+from pathlib import Path
 
 import pytest
 from docx import Document
@@ -12,10 +13,9 @@ from web_app.syllabus.extract_text import docx_to_markdown
 from web_app.syllabus.grad_matrix import NAME_ONLY_NOTE
 from web_app.syllabus.rules import build_draft
 
-SAMPLE_SYLLABUS = os.environ.get(
-    "CALC_SAMPLE_SYLLABUS_DOCX",
-    "/home/box/agent-data/agents/7034809e-f119-43b6-8ff6-3505cccdb393/attachments/"
-    "f50d80ae25a0667002c6fb819fbe6f902b80fd26e67df0572760544e273ba029.docx",
+SAMPLE_SYLLABUS = Path(
+    os.environ.get("CALC_SAMPLE_SYLLABUS_DOCX")
+    or Path(__file__).parent / "fixtures" / "synthetic_syllabus.docx"
 )
 
 
@@ -174,10 +174,10 @@ def test_grad_export_shows_strength(tmp_path):
     assert body[3] == "H"
 
 
-def test_sample_syllabus_matrix_when_present():
-    if not os.path.isfile(SAMPLE_SYLLABUS):
-        pytest.skip("样例大纲不存在")
-    draft = _draft_from_docx(open(SAMPLE_SYLLABUS, "rb").read(), 5)
+def test_sample_syllabus_matrix():
+    if os.environ.get("CALC_SAMPLE_SYLLABUS_DOCX") and not SAMPLE_SYLLABUS.is_file():
+        pytest.skip("指定的大纲样例不存在")
+    draft = _draft_from_docx(SAMPLE_SYLLABUS.read_bytes(), 5)
     expected = [
         ("理论知识", "H"),
         ("专业视野", "M"),
