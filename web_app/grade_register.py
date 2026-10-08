@@ -1,4 +1,4 @@
-"""学校成绩登记表：不调用 AI。xlsx / xls / 文字 PDF。"""
+"""学校成绩登记表：不调用 AI。xlsx / xls / Word docx / 文字 PDF。"""
 from __future__ import annotations
 
 import io
@@ -100,6 +100,41 @@ def _rows_and_prose_from_pdf(data: bytes) -> tuple[list[list[str]], str]:
     return rows, prose
 
 
+def _rows_and_prose_from_docx(data: bytes) -> tuple[list[list[str]], str]:
+    from docx import Document
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    try:
+        document = Document(io.BytesIO(data))
+    except Exception as exc:
+        raise ServiceError("无法读取这份 Word 成绩登记表，请确认文件是 .docx。") from exc
+    rows: list[list[str]] = []
+    prose: list[str] = []
+    has_table = False
+    for child in document.element.body.iterchildren():
+        tag = child.tag.split("}")[-1]
+        if tag == "p":
+            text = _clean(Paragraph(child, document).text)
+            if text:
+                rows.append([text])
+                prose.append(text)
+        elif tag == "tbl":
+            has_table = True
+            for row in Table(child, document).rows:
+                cells = []
+                previous = None
+                for cell in row.cells:
+                    # 横向合并的重复单元格留空，保留列位置；纵向合并的班级正常继承。
+                    cells.append("" if cell._tc is previous else _clean(cell.text))
+                    previous = cell._tc
+                rows.append(cells)
+                prose.append(" ".join(cells))
+    if not has_table:
+        raise ServiceError("Word 成绩登记表中没有找到表格，请上传含学生成绩表格的 .docx 文件。")
+    return rows, "\n".join(prose)
+
+
 def column_label(value: Any) -> str:
     """去空白，去掉括号里的百分比，供老师看见的列名。"""
     text = _clean(value)
@@ -122,7 +157,7 @@ def _link_kind(norm: str) -> str | None:
 
 
 def _header_map(row: list[str]) -> dict[str, Any] | None:
-    joined = "".join(row)
+    joined = "".join(normalize_header(cell) for cell in row)
     if "姓名" not in joined:
         return None
     if "学号" not in joined and "班级" not in joined:
@@ -143,13 +178,13 @@ def _header_map(row: list[str]) -> dict[str, Any] | None:
         norm = normalize_header(cell)
         if not norm:
             continue
-        if mapping["class"] is None and "班级" in cell and "学号" not in cell:
+        if mapping["class"] is None and "班级" in norm and "学号" not in norm:
             mapping["class"] = index
             continue
-        if mapping["sid"] is None and "学号" in cell:
+        if mapping["sid"] is None and "学号" in norm:
             mapping["sid"] = index
             continue
-        if mapping["name"] is None and "姓名" in cell:
+        if mapping["name"] is None and "姓名" in norm:
             mapping["name"] = index
             continue
         if norm == "备注" or norm.startswith("备注"):
@@ -219,8 +254,10 @@ def parse_register(filename: str, data: bytes) -> dict:
         prose = "\n".join(" ".join(cell for cell in row if cell) for row in rows)
     elif suffix == ".pdf":
         rows, prose = _rows_and_prose_from_pdf(data)
+    elif suffix == ".docx":
+        rows, prose = _rows_and_prose_from_docx(data)
     else:
-        raise ServiceError("成绩登记表只接受 .xlsx、.xls 或带文字的 PDF。")
+        raise ServiceError("成绩登记表支持 Excel（.xlsx、.xls）、Word（.docx）或带文字的 PDF。")
 
     header_index = None
     mapping = None

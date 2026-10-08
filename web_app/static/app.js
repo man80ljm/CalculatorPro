@@ -1892,7 +1892,7 @@ function updateSummaries() {
       registerHint.textContent = count ? `已导入 ${count} 人 · ${modeLabel}` : `已导入 · ${modeLabel}`;
       registerHint.dataset.tone = "done";
     } else {
-      registerHint.textContent = "xlsx / xls / pdf";
+      registerHint.textContent = "Excel / Word(.docx) / PDF";
       registerHint.dataset.tone = "todo";
     }
   }
