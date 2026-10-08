@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>登录 · 运维后台</title>
+  <link rel="stylesheet" href="static/admin.css">
+</head>
+<body class="center" data-page="login">
+  <main class="card">
+    <p class="kicker">CalculatorPro</p>
+    <h1>运维登录</h1>
+    <p class="lead">只读后台，与教师账号无关。登录后只能查看，不能改课、改密或代登录。</p>
+    <form id="login-form">
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button class="full" type="submit">登录</button>
+      <p id="error" class="error" role="alert"></p>
+    </form>
+  </main>
+  <script src="static/admin.js"></script>
+</body>
+</html>

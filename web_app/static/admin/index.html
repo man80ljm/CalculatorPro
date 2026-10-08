@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>概览 · 运维后台</title>
+  <link rel="stylesheet" href="static/admin.css">
+</head>
+<body data-page="overview">
+  <div class="shell">
+    <aside>
+      <p class="kicker">CalculatorPro</p>
+      <strong>运维后台</strong>
+      <nav>
+        <a href="./" aria-current="page">概览</a>
+        <a href="users">用户</a>
+        <a href="jobs">任务</a>
+      </nav>
+      <button type="button" id="logout" class="ghost">退出</button>
+    </aside>
+    <main>
+      <div class="page-head">
+        <h1>概览</h1>
+        <button type="button" id="refresh" class="ghost">刷新</button>
+      </div>
+      <p class="note">只读。今日和本周按北京时间统计，周一 0 点起算。本周活跃是这段时间内有新登录、课程更新或新文件的教师，按人去重。排队深度 = DeepSeek 池等待数 + 内存里状态为排队的报告数，同一次排队可能两边都会计入。</p>
+      <p id="error" class="banner" hidden></p>
+      <section id="cards" class="cards" aria-live="polite"></section>
+    </main>
+  </div>
+  <script src="static/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>用户 · 运维后台</title>
+  <link rel="stylesheet" href="static/admin.css">
+</head>
+<body data-page="users">
+  <div class="shell">
+    <aside>
+      <p class="kicker">CalculatorPro</p>
+      <strong>运维后台</strong>
+      <nav>
+        <a href="./">概览</a>
+        <a href="users" aria-current="page">用户</a>
+        <a href="jobs">任务</a>
+      </nav>
+      <button type="button" id="logout" class="ghost">退出</button>
+    </aside>
+    <main>
+      <div class="page-head">
+        <h1>用户</h1>
+        <button type="button" id="refresh" class="ghost">刷新</button>
+      </div>
+      <p class="note">只显示账号和数量：注册时间、课程、学期、最近登录、最近报告。不能改密码，不能代登录。时间显示为北京时间。</p>
+      <p id="error" class="banner" hidden></p>
+      <div id="users"></div>
+    </main>
+  </div>
+  <script src="static/admin.js"></script>
+</body>
+</html>

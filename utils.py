@@ -1,0 +1,103 @@
+import contextvars
+import os
+import sys
+from contextlib import contextmanager
+
+import openpyxl
+from openpyxl.utils import get_column_letter
+from openpyxl.cell import MergedCell
+
+# Per-task output directory. The desktop app leaves this unset and keeps using
+# the shared outputs/ folder. The web service sets it so each request writes
+# into its own temporary directory.
+_outputs_override: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "calculatorpro_outputs_dir",
+    default=None,
+)
+
+def normalize_score(score: float) -> float:
+    """Normalize score to 0-100 range."""
+    return max(0, min(100, score))
+
+def get_grade_level(score: float) -> str:
+    """Determine grade level based on score."""
+    if score >= 90:
+        return "优秀"
+    elif score >= 80:
+        return "良好"
+    elif score >= 70:
+        return "中等"
+    elif score >= 60:
+        return "合格"
+    else:
+        return "不达标"
+
+def calculate_final_score(usual: float, midterm: float, final: float, 
+                         usual_ratio: float, midterm_ratio: float, final_ratio: float) -> float:
+    """Calculate final score based on ratios."""
+    return usual * usual_ratio + midterm * midterm_ratio + final * final_ratio
+
+def calculate_achievement_level(score: float) -> float:
+    """Calculate achievement level as a percentage."""
+    return score / 100
+
+def adjust_column_widths(worksheet):
+    """Adjust column widths based on content, handling MergedCell correctly."""
+    column_widths = {}
+    
+    # 遍历工作表中的所有单元格
+    for row in worksheet.rows:
+        for cell in row:
+            try:
+                # 跳过 MergedCell 类型的单元格
+                if cell.value and not isinstance(cell, MergedCell):
+                    # 使用 cell.column 获取列号（整数），转换为列字母
+                    col_letter = get_column_letter(cell.column)
+                    # 计算单元格内容的字符长度（考虑中文字符）
+                    cell_len = sum(2 if ord(char) > 127 else 1 for char in str(cell.value))
+                    # 更新该列的最大宽度
+                    column_widths[col_letter] = max(column_widths.get(col_letter, 8), cell_len + 2)
+            except Exception as e:
+                print(f"Error adjusting column width for cell {cell.coordinate}: {str(e)}")
+                continue
+    
+    # 设置列宽
+    for col_letter, width in column_widths.items():
+        worksheet.column_dimensions[col_letter].width = min(width, 50)  # 限制最大宽度为 50
+
+def get_app_root() -> str:
+    """Get application root directory for both source and frozen builds."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.dirname(__file__))
+
+def get_outputs_dir() -> str:
+    """Ensure outputs directory exists under app root.
+
+    When ``override_outputs_dir`` is active, that directory is used instead so
+    concurrent web requests do not share one outputs folder.
+    """
+    override = _outputs_override.get()
+    if override:
+        os.makedirs(override, exist_ok=True)
+        return override
+    outputs_dir = os.path.join(get_app_root(), "outputs")
+    os.makedirs(outputs_dir, exist_ok=True)
+    return outputs_dir
+
+
+@contextmanager
+def override_outputs_dir(path: str):
+    """Temporarily send all ``get_outputs_dir()`` writes to ``path``."""
+    os.makedirs(path, exist_ok=True)
+    token = _outputs_override.set(os.path.abspath(path))
+    try:
+        yield path
+    finally:
+        _outputs_override.reset(token)
+
+def get_resource_path(relative_path: str) -> str:
+    """Get resource path for both source and PyInstaller builds."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath(os.path.dirname(__file__)), relative_path)
