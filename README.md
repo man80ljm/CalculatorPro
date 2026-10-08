@@ -137,7 +137,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-浏览器打开 <http://127.0.0.1:18090> 。网页端口只绑定在 `127.0.0.1`，应用内存限制约 1GB。Postgres 16 不向宿主机发布端口，内存限制约 512MB，数据在 `/data/databases/calculatorpro/postgres`。应用会等数据库健康检查通过后再启动。`/healthz` 返回 `{"status":"ok"}` 时表示进程和数据库都可用。上传的 Excel 默认不超过 10MB。
+浏览器打开 <http://127.0.0.1:18090> 。网页端口只绑定在 `127.0.0.1`，应用内存限制约 2GB。Postgres 16 不向宿主机发布端口，内存限制约 512MB，数据在 `/data/databases/calculatorpro/postgres`。应用会等数据库健康检查通过后再启动。`/healthz` 返回 `{"status":"ok"}` 时表示进程和数据库都可用。上传的 Excel 默认不超过 10MB。
 
 ### 本地直接运行
 
@@ -280,3 +280,13 @@ python -m web_app.migrate_v2 --downgrade --backup-dir ./backups
 首次20人测试发现两个报告保存失败，定位到SQLite文件库使用StaticPool共用连接的事务冲突；已改为文件库默认连接池，内存库保留原共享连接。补充未提交数据不可被其他事务读取/提交、20个并发事务独立提交/回滚的回归测试后，以上各档复测通过。配置依据：[SQLAlchemy SQLite线程与连接池说明](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#threading-pooling-behavior)。
 
 这是本机的短时流程压测。真实DeepSeek响应时间、额度/限流、部署机器的资源和PostgreSQL容量没有在本次测试中测量，不能据此承诺线上20人性能。长时间稳定性可增加轮数继续观察。当前报告任务保存在单进程内存，启动时保持单个Uvicorn worker；扩展多进程前需要共享任务存储或队列。
+
+## 2026-10-09 上线记录
+
+功能版本 `088d25e` 已部署到 `https://calc.geekhuang.com/`，正式目录为 `/data/projects/calculatorpro`。镜像复用原有生产依赖，只覆盖已验证的代码；正式Compose中上传目录和只读密钥目录挂载保留，`.env`沿用服务器原配置。发布前保存数据库、上传文件、旧代码和旧镜像，发布后核对原有记录和上传文件完整。
+
+发布目录和备份在 `/data/projects/calculatorpro-releases/088d25e-20261009/`，旧镜像标签为 `calculatorpro-web:rollback-20261009`。`deployment-result.json`记录镜像ID、备份位置及数据核对结果。生产库没有导入本地账号、课程或密钥；线上浏览器验收使用的临时合成账号与课程已清理。
+
+独立PostgreSQL16预发布环境中使用20个合成账号，每课35人，混合正向/逆向，AI模拟等待3秒；验证计算、导出、报告、跨账号隔离及大纲版本。使用同一成绩表分别在旧镜像和新镜像中计算、导出，达成度与表5一致。正式HTTPS登录后检查新版资源、同名提示、Word格式提示和弹窗外侧误触/Esc行为，页面无脚本异常。
+
+预发布曾在1GB限制下因内存上限退出，即使报告任务已完成也存在风险。因此网页容器上限改为2GB，Docker Compose默认配置同步更新；PostgreSQL仍为512MB。正式服务通过Docker update平滑调整并在Compose中持久保存。真实AI速度和长时间运行容量仍需另测。
