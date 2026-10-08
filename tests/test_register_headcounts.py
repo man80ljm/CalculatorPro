@@ -47,3 +47,37 @@ def test_statistics_section_is_not_counted_as_students(label):
     parsed = parse_register("synthetic.xlsx", register_bytes(rows))
     assert parsed["student_count"] == 3
     assert [student["name"] for student in parsed["students"]] == ["合成甲", "合成乙", "合成丙"]
+
+
+@pytest.mark.parametrize("gap", [[], ["", "", "", None, 80], HEADERS, ["", "", "姓名"]])
+def test_roster_continues_after_empty_rows_and_repeated_headers(gap):
+    rows = [STUDENTS[0], gap, STUDENTS[1], HEADERS, STUDENTS[2]]
+    parsed = parse_register("synthetic.xlsx", register_bytes(rows, ["成绩统计"]))
+    assert parsed["student_count"] == 3
+    assert [student["name"] for student in parsed["students"]] == ["合成甲", "合成乙", "合成丙"]
+    assert parsed["students"][1]["final"] == 0
+
+
+def test_pdf_repeated_header_on_second_page_keeps_all_students():
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import PageBreak, SimpleDocTemplate, Table, TableStyle
+
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    blob = io.BytesIO()
+    document = SimpleDocTemplate(blob, pagesize=A4)
+    style = TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+    ])
+    first = Table([HEADERS] + STUDENTS[:1], colWidths=[55, 70, 50, 65, 65, 50, 40])
+    second = Table([HEADERS] + STUDENTS[1:], colWidths=[55, 70, 50, 65, 65, 50, 40])
+    first.setStyle(style)
+    second.setStyle(style)
+    document.build([first, PageBreak(), second])
+    parsed = parse_register("synthetic.pdf", blob.getvalue())
+    assert parsed["student_count"] == 3
+    assert [student["name"] for student in parsed["students"]] == ["合成甲", "合成乙", "合成丙"]

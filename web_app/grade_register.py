@@ -249,15 +249,17 @@ def parse_register(filename: str, data: bytes) -> dict:
     students = []
     classes: list[str] = []
     for row in rows[header_index + 1 :]:
+        if _header_map(row):
+            continue
         # 统计区由行首标签判断；学生成绩或备注里的「缓考」「优秀」不结束名单。
         row_label = next((cell for cell in row if cell), "")
         if any(row_label.startswith(token) for token in _STOP):
             break
         name = cell_at(row, mapping["name"])
-        if not name or name in {"姓名", "合计"}:
-            if students:
-                break
+        if not name or name == "姓名":
             continue
+        if name == "合计":
+            break
         class_name = cell_at(row, mapping["class"])
         if class_name and class_name not in classes:
             classes.append(class_name)
