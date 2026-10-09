@@ -7,7 +7,7 @@ from io import BytesIO
 
 from sqlalchemy import select
 
-from web_app.db import CourseFile, FileBatch
+from web_app.db import CourseFile, FileBatch, NotFound, ReportTask
 from web_app.download_names import archive_filename
 from web_app.storage import download_filename
 from web_app.terms import list_terms, term_public
@@ -37,6 +37,46 @@ def make_archive(files: list[tuple[str, bytes]], excel: bytes | None = None,
         if previous is not None:
             archive.writestr("导入资料/上一轮达成度.xlsx", previous)
     return buffer.getvalue()
+
+
+def history_version_files(db, course, archive_id: int) -> list[CourseFile]:
+    """在用户写入锁内核对历史包；只移除能明确归属且未被其他版本引用的文件。"""
+    from web_app.service import ServiceError
+    archive = db.scalar(select(CourseFile).where(
+        CourseFile.id == archive_id, CourseFile.user_id == course.user_id, CourseFile.course_id == course.id,
+    ))
+    if archive is None or archive.kind not in {"report", "output"} or not archive.original_name.lower().endswith(".zip"):
+        raise NotFound()
+    packages = list(db.scalars(select(CourseFile).where(
+        CourseFile.user_id == course.user_id, CourseFile.course_id == course.id,
+        CourseFile.term_id == archive.term_id, CourseFile.kind.in_(("report", "output")),
+    ).order_by(CourseFile.id.desc())))
+    latest = next((row for row in packages if row.original_name.lower().endswith(".zip")), None)
+    if latest is None or latest.id == archive.id:
+        raise ServiceError("请保留本学期最新资料包，只能删除历史版本。", status=409)
+    tasks = list(db.scalars(select(ReportTask).where(ReportTask.archive_file_id == archive.id)))
+    if any(task.status in {"running", "queued"} for task in tasks):
+        raise ServiceError("这一版仍在生成，请完成后再删除。", status=409)
+    batches = list(db.scalars(select(FileBatch).where(
+        FileBatch.user_id == course.user_id, FileBatch.course_id == course.id,
+    )))
+    batch = next((item for item in batches if item.archive_file_id == archive.id), None)
+    members = []
+    if batch is not None:
+        protected = {item.archive_file_id for item in batches if item.id != batch.id}
+        protected.update(file_id for item in batches if item.id != batch.id for file_id in json.loads(item.file_ids_json))
+        member_ids = set(json.loads(batch.file_ids_json)) - protected
+        if member_ids:
+            members = list(db.scalars(select(CourseFile).where(
+                CourseFile.id.in_(member_ids), CourseFile.user_id == course.user_id, CourseFile.course_id == course.id,
+                CourseFile.term_id == archive.term_id, CourseFile.kind == archive.kind,
+            )))
+            members = [row for row in members if not row.original_name.lower().endswith(".zip")]
+        db.delete(batch)
+    # 保留任务统计，删除后的任务下载明确返回不存在。
+    for task in tasks:
+        task.archive_file_id = None
+    return [archive, *members]
 
 
 def materials_catalog(db, course) -> dict:

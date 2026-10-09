@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import os
+import logging
 import shutil
 import uuid
 from pathlib import Path
 from contextvars import ContextVar
+from contextlib import contextmanager
 
 from web_app.db import CourseFile, NotFound
 
@@ -122,6 +124,51 @@ def read_blob(row: CourseFile) -> bytes:
     if not path.is_file():
         raise NotFound()
     return path.read_bytes()
+
+
+@contextmanager
+def staged_blob_deletion():
+    """先暂存文件，数据库提交失败时恢复；成功后才清理暂存文件夹。"""
+    folders = {}
+    moved = []
+
+    def stage(rows):
+        for row in rows:
+            path = resolve_stored(row.user_id, row.course_id, row.stored_name)
+            if not path.exists():
+                continue
+            if not path.is_file():
+                raise OSError("课程资料不是普通文件")
+            parent = path.parent
+            if parent not in folders:
+                folder = (parent / (".deleted-" + uuid.uuid4().hex)).resolve()
+                if folder.parent != parent:
+                    raise NotFound()
+                folder.mkdir()
+                folders[parent] = folder
+            target = folders[parent] / path.name
+            os.replace(path, target)
+            moved.append((path, target))
+
+    def clean():
+        for parent, folder in folders.items():
+            # 递归清理前再次核对范围，绝不清理课程目录本身。
+            if folder.resolve().parent != parent or not folder.name.startswith(".deleted-"):
+                raise NotFound()
+            try:
+                shutil.rmtree(folder)
+            except OSError:
+                logging.getLogger(__name__).exception("历史资料暂存文件夹清理失败")
+
+    try:
+        yield stage
+    except BaseException:
+        for path, target in reversed(moved):
+            os.replace(target, path)
+        clean()
+        raise
+    else:
+        clean()
 
 
 def remove_tree(user_id: int, course_id: int) -> None:

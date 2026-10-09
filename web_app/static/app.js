@@ -70,6 +70,7 @@ const downloadedReportJobs = new Set();
 let reportWatch = 0;
 let reportState = null;
 let reportPending = false;
+let materialDeleteTarget = null;
 let currentUserId = null;
 let sessionStopped = false;
 let courseRevision = "";
@@ -816,7 +817,7 @@ function renderAll() {
   renderNoiseTargets();
 }
 
-function renderFiles() {
+function renderFiles(refreshMaterials = true) {
   const grade = courseFiles.find((file) => file.kind === "grade");
   const previous = courseFiles.find((file) => file.kind === "previous");
   document.getElementById("fileName").textContent = grade ? `已保存：${grade.original_name}` : "尚未导入成绩表";
@@ -824,7 +825,7 @@ function renderFiles() {
     ? `已保存：${previous.original_name}`
     : "导入新学期成绩时会自动读取上一学期达成度；也可手动上传覆盖。没有上一学期或不曾计算则为 —";
   updateSummaries();
-  if (document.getElementById("dlgFiles").open) loadMaterials();
+  if (refreshMaterials && document.getElementById("dlgFiles").open) loadMaterials();
 }
 
 function materialDate(value) {
@@ -866,8 +867,66 @@ function materialFold(title, body) {
   return el("details", { class: "material-fold" }, [el("summary", { text: title }), body]);
 }
 
+function materialDeleteButton(term, version, label) {
+  const button = el("button", { type: "button", class: "danger small", text: "删除这一版",
+    "data-delete-archive-id": String(version.archive.id), "aria-label": `删除 ${term.label} ${label}` });
+  button.addEventListener("click", () => {
+    materialDeleteTarget = { courseId, termId: term.id, archiveId: version.archive.id };
+    document.getElementById("deleteVersionMessage").textContent = `确定删除“${courseName}”的${label}吗？`;
+    document.getElementById("deleteVersionInfo").textContent = `${term.label} · ${materialDate(version.archive.created_at)}`;
+    document.getElementById("deleteVersionWarning").textContent = version.legacy
+      ? "将删除这一版压缩包，单独保存的旧文档会保留。原始成绩和其他版本不受影响。删除后无法在本程序中恢复。"
+      : "将删除这一版压缩包及文档，原始成绩和其他版本会保留。删除后无法在本程序中恢复。";
+    document.getElementById("deleteVersionError").hidden = true;
+    openDialog("dlgDeleteVersion");
+    document.getElementById("cancelDeleteVersion").focus();
+  });
+  return button;
+}
+
+async function deleteMaterialVersion() {
+  const target = materialDeleteTarget;
+  const dlg = document.getElementById("dlgDeleteVersion");
+  const button = document.getElementById("confirmDeleteVersion");
+  const error = document.getElementById("deleteVersionError");
+  if (!target || target.courseId !== courseId || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "正在删除…";
+  dlg.dataset.busy = "1";
+  error.hidden = true;
+  try {
+    await flushSave();
+    if (target.courseId !== courseId) throw new Error("课程已切换，请重新选择要删除的版本。");
+    const response = await api(`/api/courses/${target.courseId}/materials/${target.archiveId}?confirm=1`, { method: "DELETE" });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    courseFiles = data.course.files || [];
+    reportState = data.course.report_state || null;
+    editBase = { name: data.course.name, settings: data.course.edit_settings || data.course.settings, term_id: data.course.current_term_id };
+    renderFiles(false);
+    renderResultCard();
+    // 取消正在读取的旧列表，保留展开的历史栏目并直接显示删除后的资料。
+    materialsRequest += 1;
+    renderMaterials(data.materials);
+    dlg.dataset.busy = "0";
+    closeDialog(dlg, true);
+    materialDeleteTarget = null;
+    const termCard = document.querySelector(`.material-term[data-term-id="${target.termId}"]`);
+    if (termCard) (termCard.querySelector("[data-history-term-id] > summary") || termCard.querySelector("button"))?.focus();
+    showResult("这一版资料已删除。", false);
+  } catch (err) {
+    error.textContent = err.message === "未登录" ? "登录已失效，请重新登录后再操作。" : err.message || "删除失败，请重试。";
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = "删除这一版";
+    dlg.dataset.busy = "0";
+  }
+}
+
 function renderMaterials(data) {
   const root = document.getElementById("savedFiles");
+  const expanded = new Set(Array.from(root.querySelectorAll("[data-history-term-id][open]")).map((node) => node.dataset.historyTermId));
   root.replaceChildren();
   document.getElementById("dlgFilesTitle").textContent = `${data.course_name} · 课程资料`;
   if (!data.terms.length) {
@@ -892,16 +951,20 @@ function renderMaterials(data) {
       if (term.versions.length > 1) {
         const history = el("div", { class: "material-history" });
         term.versions.slice(1).forEach((version, index) => {
+          const label = `第 ${term.versions.length - index - 1} 版`;
           const item = el("div", { class: "material-history-item" }, [
             el("div", { class: "material-package" }, [
-              el("span", { text: `第 ${term.versions.length - index - 1} 版 · ${materialDate(version.archive.created_at)} · ${version.kind === "report" ? "含 AI 分析报告" : "统计资料"}` }),
-              materialDownload(version.archive, "下载这一版"),
+              el("span", { text: `${label} · ${materialDate(version.archive.created_at)} · ${version.kind === "report" ? "含 AI 分析报告" : "统计资料"}` }),
+              el("div", { class: "material-version-actions" }, [materialDeleteButton(term, version, label), materialDownload(version.archive, "下载这一版")]),
             ]),
           ]);
           if (version.files.length) item.append(materialFold("查看这一版的单个文件", materialFileGroups(version.files)));
           history.append(item);
         });
-        card.append(materialFold(`查看历史版本（${term.versions.length - 1}）`, history));
+        const fold = materialFold(`查看历史版本（${term.versions.length - 1}）`, history);
+        fold.dataset.historyTermId = String(term.id);
+        fold.open = expanded.has(String(term.id));
+        card.append(fold);
       }
     } else {
       card.append(el("p", { class: "hint", text: "本学期尚未生成资料包，完成计算或生成报告后即可下载。" }));
@@ -2040,6 +2103,7 @@ async function saveDialog(dlg) {
 }
 
 function bindDialogs() {
+  document.getElementById("confirmDeleteVersion").addEventListener("click", deleteMaterialVersion);
   document.querySelectorAll("[data-open]").forEach((button) => {
     button.addEventListener("click", () => openDialog(button.dataset.open));
   });

@@ -438,7 +438,7 @@
       <form method="dialog" class="dlg-inner">
         <header class="dlg-head"><h2 id="dlgFilesTitle">课程资料</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
         <div class="dlg-body">
-          <p class="hint">按学期查找资料。下载最新资料包，或展开查看单个文件和历史版本。</p>
+          <p class="hint">按学期查找资料。可下载资料，也可展开历史版本，删除不需要的旧资料。</p>
           <div class="term-materials" id="savedFiles" aria-live="polite"></div>
         </div>
         <footer class="dlg-foot">
@@ -446,6 +446,18 @@
           <button type="button" data-close>关闭</button>
         </footer>
       </form>
+    </dialog>
+    <dialog class="dlg dlg-confirm" id="dlgDeleteVersion" aria-labelledby="dlgDeleteVersionTitle" data-needs-course>
+      <div class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgDeleteVersionTitle">删除历史版本</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <p id="deleteVersionMessage"></p>
+          <p class="hint" id="deleteVersionInfo"></p>
+          <p id="deleteVersionWarning"></p>
+          <p class="form-error" id="deleteVersionError" role="alert" hidden></p>
+        </div>
+        <footer class="dlg-foot"><button type="button" class="secondary" id="cancelDeleteVersion" data-close>暂不删除</button><button type="button" class="danger" id="confirmDeleteVersion">删除这一版</button></footer>
+      </div>
     </dialog>
   </main>
   <footer class="note">课程和资料会保存在你的账号下。报告生成后，可以到课程资料中查看和下载。</footer>

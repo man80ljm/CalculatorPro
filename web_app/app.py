@@ -36,7 +36,7 @@ from web_app.auth import (
 )
 from web_app.course_versions import term_curriculum
 from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow, write_context
-from web_app.course_materials import file_public, make_archive, materials_catalog
+from web_app.course_materials import file_public, history_version_files, make_archive, materials_catalog
 from web_app.download_names import archive_filename
 from web_app.static_assets import RevalidatedStaticFiles, page_response
 from web_app.terms import (
@@ -61,6 +61,7 @@ from web_app.storage import (
     read_blob,
     remove_tree,
     save_blob,
+    staged_blob_deletion,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -803,6 +804,30 @@ def create_app() -> FastAPI:
             return JSONResponse(materials_catalog(db, course))
 
     application.get("/api/courses/{course_id}/materials")(list_materials)
+
+    @_api
+    async def delete_material_version(course_id: int, archive_id: int, request: Request):
+        user_id, _session_id = _identity(request)
+        if request.query_params.get("confirm") != "1":
+            raise ServiceError("请先确认删除这一版资料。")
+        try:
+            with staged_blob_deletion() as stage:
+                with session_scope() as db:
+                    course = _owned_course(db, user_id, course_id)
+                    rows = history_version_files(db, course, archive_id)
+                    # 先移除批次/任务引用，避免文件的外键级联抢先删除同一批次。
+                    db.flush()
+                    stage(rows)
+                    for row in rows:
+                        db.delete(row)
+                    course.updated_at = utcnow()
+                    db.flush()
+                    payload = {"ok": True, "materials": materials_catalog(db, course), "course": _course_dict(db, course)}
+        except OSError as exc:
+            raise ServiceError("文件暂时无法删除，请稍后重试。", status=503) from exc
+        return JSONResponse(payload)
+
+    application.delete("/api/courses/{course_id}/materials/{archive_id}")(delete_material_version)
 
     @_api
     async def upload_course_file(course_id: int, request: Request):
