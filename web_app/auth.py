@@ -10,7 +10,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from web_app.db import User, UserSession, session_expiry, session_scope, utcnow
+from web_app.db import User, UserSession, SessionHead, lock_user, session_expiry, session_scope, utcnow
 
 COOKIE_NAME = "cp_session"
 SESSION_MAX_AGE = 12 * 60 * 60
@@ -22,9 +22,10 @@ _dummy_hash: str | None = None
 
 
 class AuthError(ValueError):
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, code: str = ""):
         super().__init__(message)
         self.status = status
+        self.code = code
 
 
 def get_secret_key() -> str:
@@ -120,6 +121,14 @@ def change_password(user_id: int, current_password: str, new_password: str) -> N
 def start_session(user_id: int) -> str:
     session_id = secrets.token_urlsafe(32)
     with session_scope() as db:
+        lock_user(db, user_id)
+        head = db.get(SessionHead, int(user_id))
+        if head is None:
+            db.add(SessionHead(user_id=int(user_id), session_id=session_id))
+        else:
+            head.session_id = session_id
+        for old in db.scalars(select(UserSession).where(UserSession.user_id == int(user_id))).all():
+            db.delete(old)
         db.add(
             UserSession(
                 id=session_id,
@@ -152,6 +161,9 @@ def read_session_token(token: str | None) -> tuple[int, str] | None:
 
 def session_is_active(user_id: int, session_id: str) -> bool:
     with session_scope() as db:
+        head = db.get(SessionHead, user_id)
+        if head is not None and head.session_id != session_id:
+            return False
         row = db.get(UserSession, session_id)
         if row is None or row.user_id != int(user_id):
             return False
@@ -159,6 +171,12 @@ def session_is_active(user_id: int, session_id: str) -> bool:
             db.delete(row)
             return False
         return True
+
+
+def session_was_replaced(user_id: int, session_id: str) -> bool:
+    with session_scope() as db:
+        head = db.get(SessionHead, user_id)
+        return bool(head and head.session_id != session_id)
 
 
 def revoke_session(session_id: str) -> None:

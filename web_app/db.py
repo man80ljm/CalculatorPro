@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import UniqueConstraint, DateTime, ForeignKey, Integer, String, Text, create_engine, event, text
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 _engine: Engine | None = None
 _engine_url: str | None = None
+write_context: ContextVar[dict | None] = ContextVar("calculatorpro_write_context", default=None)
 
 
 class NotFound(LookupError):
@@ -109,6 +111,15 @@ def init_db() -> None:
 def session_scope():
     db = Session(get_engine(), expire_on_commit=False)
     try:
+        guard = write_context.get()
+        if guard:
+            # 登录切换与写入使用同一把用户锁，已进入处理的旧请求也不能越过切换。
+            lock_user(db, guard["user_id"])
+            head = db.get(SessionHead, guard["user_id"])
+            session = db.get(UserSession, guard["session_id"])
+            if session is None or not session.alive() or (head and head.session_id != guard["session_id"]):
+                from web_app.auth import AuthError
+                raise AuthError("账号已在别处登录，本页已停止保存。填写内容已保留。", status=401, code="session_replaced")
         yield db
         db.commit()
     except Exception:
@@ -116,6 +127,13 @@ def session_scope():
         raise
     finally:
         db.close()
+
+
+def lock_user(db, user_id: int):
+    from sqlalchemy import select
+    if db.bind.dialect.name == "sqlite":
+        db.execute(text("BEGIN IMMEDIATE"))
+    return db.scalar(select(User).where(User.id == int(user_id)).with_for_update())
 
 
 def ping_db() -> None:
@@ -142,6 +160,13 @@ class UserSession(Base):
 
     def alive(self, now: datetime | None = None) -> bool:
         return self.expires_at > (now or utcnow())
+
+
+class SessionHead(Base):
+    """每账号当前有效会话。单独建表，兼容已有数据库。"""
+    __tablename__ = "session_heads"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64))
 
 
 def session_expiry(now: datetime | None = None) -> datetime:

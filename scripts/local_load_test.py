@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -118,9 +119,19 @@ class Client:
         self.grade_bytes = b""
 
     def request(self, name, method, path, *, expected=200, record=True, **kwargs):
+        match = re.match(r"^/api/courses/(\d+)(?:/|$)", path)
+        if match and method.upper() not in {"GET", "HEAD"}:
+            current = self.session.get(self.base + f"/api/courses/{match[1]}", timeout=30)
+            if current.status_code == 200:
+                kwargs["headers"] = {**kwargs.get("headers", {}), "X-Course-Revision": current.json()["edit_revision"]}
         started = time.perf_counter()
         try:
             response = self.session.request(method, self.base + path, timeout=120, **kwargs)
+            if response.status_code == 409 and response.json().get("code") == "edit_conflict" and match:
+                # 压测同账号同时发起多个操作时，使用当前版本重新提交相同的合成输入。
+                current = self.session.get(self.base + f"/api/courses/{match[1]}", timeout=30)
+                kwargs["headers"]["X-Course-Revision"] = current.json()["edit_revision"]
+                response = self.session.request(method, self.base + path, timeout=120, **kwargs)
         except requests.RequestException as exc:
             if record:
                 self.measurements.append({"name": name, "user": self.number,

@@ -283,6 +283,11 @@ python -m web_app.migrate_v2 --downgrade --backup-dir ./backups
 
 ## 2026-10-09 上线记录
 
+## 本地稳定性开发（尚未部署）
+
+新登录自动替换同账号的旧会话，旧页停止写入并保留课程填写草稿。课程写接口要求 `X-Course-Revision`（读取课程返回的 `edit_revision`），旧页不能静默覆盖新内容；普通保存带 `base` 时自动合并不同字段，相同字段保留双方选择。会话切换与写入在数据库内按用户串行验证；正在处理的报告归账号所有，不因会话切换取消。
+
+
 功能版本 `088d25e` 已部署到 `https://calc.geekhuang.com/`，正式目录为 `/data/projects/calculatorpro`。镜像复用原有生产依赖，只覆盖已验证的代码；正式Compose中上传目录和只读密钥目录挂载保留，`.env`沿用服务器原配置。发布前保存数据库、上传文件、旧代码和旧镜像，发布后核对原有记录和上传文件完整。
 
 发布目录和备份在 `/data/projects/calculatorpro-releases/088d25e-20261009/`，旧镜像标签为 `calculatorpro-web:rollback-20261009`。`deployment-result.json`记录镜像ID、备份位置及数据核对结果。生产库没有导入本地账号、课程或密钥；线上浏览器验收使用的临时合成账号与课程已清理。

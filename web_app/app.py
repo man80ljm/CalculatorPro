@@ -6,6 +6,7 @@ import functools
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -30,10 +31,11 @@ from web_app.auth import (
     register_user,
     revoke_session,
     session_is_active,
+    session_was_replaced,
     start_session,
 )
 from web_app.course_versions import term_curriculum
-from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow
+from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow, write_context
 from web_app.course_materials import file_public, make_archive, materials_catalog
 from web_app.download_names import archive_filename
 from web_app.static_assets import RevalidatedStaticFiles, page_response
@@ -210,10 +212,24 @@ class _Guard:
             if isinstance(state, dict):
                 state["user_id"] = parsed[0]
                 state["session_id"] = parsed[1]
-            await self.app(scope, receive, send)
+            token = None
+            if scope.get("method") in {"POST", "PATCH", "PUT", "DELETE"}:
+                match = re.match(r"^/api/courses/(\d+)(?:/|$)", path)
+                headers = dict(scope.get("headers") or [])
+                token = write_context.set({"user_id": parsed[0], "session_id": parsed[1],
+                    "course_id": int(match[1]) if match else None,
+                    "revision": headers.get(b"x-course-revision", b"").decode("ascii", "ignore"),
+                    "checked": False, "merge": bool(match and scope.get("method") == "PATCH" and path == f"/api/courses/{match[1]}")})
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                if token is not None:
+                    write_context.reset(token)
             return
         if path.startswith("/api/"):
-            response = _json_error(401, "未登录或登录已过期")
+            replaced = bool(parsed and session_was_replaced(*parsed))
+            response = _json_error(401, "账号已在别处登录，本页已停止保存。填写内容已保留。" if replaced else "未登录或登录已过期",
+                                   code="session_replaced" if replaced else "session_expired")
         else:
             response = RedirectResponse("/login", status_code=303)
         await response(scope, receive, send)
@@ -223,11 +239,18 @@ def _api(fn):
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         try:
-            return await fn(*args, **kwargs)
+            response = await fn(*args, **kwargs)
+            guard = write_context.get()
+            if guard and guard.get("course_id") and response.status_code < 400:
+                with session_scope() as db:
+                    course = db.get(Course, guard["course_id"])
+                    if course:
+                        response.headers["X-Course-Revision"] = course.updated_at.isoformat(timespec="microseconds")
+            return response
         except NotFound:
             return _json_error(404, "没有找到")
         except AuthError as exc:
-            return _json_error(exc.status, str(exc))
+            return _json_error(exc.status, str(exc), code=exc.code)
         except ServiceError as exc:
             return _json_error(getattr(exc, "status", 400) or 400, str(exc), **(getattr(exc, "extra", None) or {}))
         except ValueError as exc:
@@ -352,7 +375,8 @@ def _term_text_requested(settings: dict) -> bool:
 
 
 def _course_dict(db, course: Course) -> dict:
-    updated = course.updated_at.isoformat(timespec="seconds") if course.updated_at else None
+    db.flush()
+    updated = course.updated_at.isoformat(timespec="microseconds") if course.updated_at else None
     term = current_term(db, course)
     terms = []
     for item in list_terms(db, course.id):
@@ -367,6 +391,7 @@ def _course_dict(db, course: Course) -> dict:
         "terms": terms,
         "files": [_file_dict(row) for row in _course_files(db, course.user_id, course.id, term.id)] if term is not None else [],
         "updated_at": updated,
+        "edit_revision": updated,
     }
 
 
@@ -374,6 +399,14 @@ def _owned_course(db, user_id: int, course_id: int) -> Course:
     course = db.scalar(select(Course).where(Course.id == int(course_id), Course.user_id == int(user_id)))
     if course is None:
         raise NotFound()
+    guard = write_context.get()
+    if guard and guard.get("course_id") == course.id and not guard.get("checked"):
+        if not guard.get("revision"):
+            raise ServiceError("页面需要更新，请重新打开课程。填写内容已保留。", status=428, code="edit_reload")
+        if guard.get("revision") and not guard.get("merge") and guard["revision"] != course.updated_at.isoformat(timespec="microseconds"):
+            raise ServiceError("课程已在其他窗口修改，请先查看最新内容。本页填写内容已保留。", status=409,
+                               code="edit_conflict", latest=_course_dict(db, course))
+        guard["checked"] = True
     return course
 
 
@@ -616,6 +649,22 @@ def create_app() -> FastAPI:
         body = await _json_body(request)
         with session_scope() as db:
             course = _owned_course(db, user_id, course_id)
+            guard = write_context.get()
+            if guard and guard.get("revision") != course.updated_at.isoformat(timespec="microseconds"):
+                latest = _course_dict(db, course)
+                base = body.get("base")
+                if not isinstance(base, dict) or base.get("term_id") != latest["current_term_id"]:
+                    raise ServiceError("课程或学期已在其他窗口修改，本页填写内容已保留。", status=409,
+                                       code="edit_conflict", latest=latest)
+                from web_app.edit_merge import merge_edits
+                local = {"name": body.get("name", course.name), "settings": absorb_relation_grid(body.get("settings") or {}, strict=False)}
+                mine, saved, conflicts = merge_edits({"name": base.get("name"), "settings": base.get("settings") or {}}, local,
+                                                    {"name": course.name, "settings": latest["settings"]})
+                if conflicts:
+                    raise ServiceError("其他窗口修改了相同内容，请确认这几项。本页填写内容已保留。", status=409,
+                                       code="edit_conflict", latest=latest, conflicts=conflicts,
+                                       local_choice=mine, saved_choice=saved)
+                body.update(mine)
             if body.get("name") is not None:
                 course.name = _course_name_ok(str(body.get("name") or ""))
             if body.get("settings") is not None:

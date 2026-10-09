@@ -20,6 +20,18 @@
     </div>
   </header>
   <main>
+    <section id="sessionNotice" class="notice" hidden role="alert">
+      <p id="sessionNoticeText"></p>
+      <p>本页填写内容已保留。重新登录后会找回未保存的修改。</p>
+      <a href="/login">重新登录</a>
+    </section>
+    <dialog class="dlg" id="dlgEditConflict">
+      <div class="dlg-inner">
+      <header class="dlg-head"><h2>确认几项修改</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+      <div class="dlg-body"><p>其他窗口修改了相同内容。其余修改会自动合并，只需确认下面这些项。</p><div id="editConflicts"></div></div>
+      <footer class="dlg-foot"><button type="button" id="useSavedEdits" class="secondary">使用已保存的这几项</button><button type="button" id="useLocalEdits">保留本页的这几项</button></footer>
+      </div>
+    </dialog>
     <section id="passwordPanel" hidden>
       <h2>修改密码</h2>
       <div class="fields">

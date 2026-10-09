@@ -37,3 +37,25 @@ def _reset_deepseek_pool_between_tests():
     reset_pool()
     yield
     reset_pool()
+
+
+@pytest.fixture(autouse=True)
+def _browser_revision_headers(monkeypatch):
+    """原有流程用例也按新网页协议发送版本头；显式空头用于测试旧页面被拒绝。"""
+    import re
+    from urllib.parse import urlsplit
+    from fastapi.testclient import TestClient
+    original = TestClient.request
+
+    def request(client, method, url, **kwargs):
+        path = urlsplit(str(url)).path
+        match = re.match(r"^/api/courses/(\d+)(?:/|$)", path)
+        headers = dict(kwargs.get("headers") or {})
+        if match and method.upper() not in {"GET", "HEAD", "OPTIONS"} and not any(k.lower() == "x-course-revision" for k in headers):
+            latest = original(client, "GET", f"/api/courses/{match[1]}")
+            if latest.status_code == 200:
+                headers["X-Course-Revision"] = latest.json()["edit_revision"]
+                kwargs["headers"] = headers
+        return original(client, method, url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request)

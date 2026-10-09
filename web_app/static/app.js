@@ -66,6 +66,20 @@ let savePaused = false;
 const SAVE_DELAY = 800;
 const downloadedReportJobs = new Set();
 let reportWatch = 0;
+let currentUserId = null;
+let sessionStopped = false;
+let courseRevision = "";
+let editBase = null;
+let conflictReply = null;
+
+function retainDraft(force = false) {
+  if (!courseId || !currentUserId || (!saveDirty && !force)) return;
+  try {
+    sessionStorage.setItem("calculatorpro.unsavedDraft", JSON.stringify({ userId: currentUserId, courseId,
+      termId: currentTermId, name: document.getElementById("courseNameInput").value.trim(),
+      settings: collectSettings(), revision: courseRevision, base: editBase }));
+  } catch (_) { /* 页面仍保留原有填写内容。 */ }
+}
 let focusCell = { row: 0, col: 0 };
 const selectedRows = new Set();
 
@@ -729,10 +743,27 @@ function filenameFromDisposition(header, fallback) {
 }
 
 async function api(path, options) {
+  const write = options && options.method && !["GET", "HEAD"].includes(options.method.toUpperCase());
+  if (sessionStopped && write) throw new Error("未登录");
+  const match = path.match(/^\/api\/courses\/(\d+)(?:\/|$)/);
+  if (write && match && Number(match[1]) === courseId) {
+    options = { ...options, headers: { ...options.headers, "X-Course-Revision": courseRevision } };
+  }
   const response = await fetch(path, options);
   if (response.status === 401) {
-    location.href = "/login";
+    const data = await response.clone().json().catch(() => ({}));
+    retainDraft(true);
+    sessionStopped = true;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    const notice = document.getElementById("sessionNotice");
+    notice.hidden = false;
+    document.getElementById("sessionNoticeText").textContent = data.detail || "登录已过期，本页已停止保存。";
+    setSaveStatus("error", "登录已失效，填写内容已保留");
     throw new Error("未登录");
+  }
+  if (write && match && Number(match[1]) === courseId && response.ok) {
+    courseRevision = response.headers.get("X-Course-Revision") || courseRevision;
   }
   return response;
 }
@@ -923,6 +954,7 @@ function setSaveStatus(state, text) {
 function scheduleSave() {
   if (savePaused || !courseId) return;
   saveDirty = true;
+  if (sessionStopped) { retainDraft(); return; }
   setSaveStatus("saving", "保存中…");
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -948,7 +980,7 @@ async function flushSave() {
       /* 上一次失败已经写在保存状态上 */
     }
   }
-  if (savePaused || !courseId || !saveDirty) return null;
+  if (savePaused || sessionStopped || !courseId || !saveDirty) return null;
   saveDirty = false;
   const courseAtStart = courseId;
   const name = document.getElementById("courseNameInput").value.trim();
@@ -965,14 +997,50 @@ async function flushSave() {
   const flight = api(`/api/courses/${courseAtStart}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, settings }),
+    body: JSON.stringify({ name, settings, base: editBase }),
   });
   saveFlight = flight;
   let result = null;
   try {
     const response = await flight;
+    if (response.status === 409) {
+      const data = await response.clone().json();
+      if (data.code === "edit_conflict") {
+        conflictReply = data;
+        saveDirty = true;
+        retainDraft();
+        const node = document.getElementById("editConflicts");
+        node.replaceChildren();
+        const labels = Object.fromEntries([...OPEN_FIELDS, ...BASIC_FIELDS]);
+        const sectionNames = { relation_grid: "考核对应关系表", relation_payload: "考核对应关系表", grad_req_map: "毕业要求对应关系", objective_requirements: "目标要求", course_description: "课程简介", ratios: "成绩占比", name: "课程文件夹名称" };
+        for (const item of data.conflicts || []) {
+          const parts = item.field.split(".");
+          const label = labels[parts.at(-1)] || sectionNames[parts.at(-1)] || "课程设置";
+          const describe = value => typeof value === "object" ? JSON.stringify(value).slice(0, 240) : String(value ?? "未填写");
+          node.append(el("p", { text: `${label}：本页 ${describe(item.local)}；已保存 ${describe(item.saved)}` }));
+        }
+        if (data.local_choice) openDialog("dlgEditConflict");
+        setSaveStatus("error", "有修改需要确认，内容已保留");
+        throw new Error(data.detail);
+      }
+    }
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
+    editBase = { name: data.name, settings: data.settings, term_id: data.current_term_id };
+    courseRevision = data.edit_revision || courseRevision;
+    const current = collectSettings();
+    function adopt(sent, local, saved) {
+      if (JSON.stringify(sent) === JSON.stringify(local)) return saved;
+      if (sent && local && saved && !Array.isArray(local) && typeof local === "object" && typeof sent === "object" && typeof saved === "object") {
+        const result = { ...local };
+        for (const key of Object.keys(local)) if (key in saved) result[key] = adopt(sent[key], local[key], saved[key]);
+        return result;
+      }
+      return local;
+    }
+    applyServerSettings(adopt(settings, current, data.settings));
+    renderAll();
+    sessionStorage.removeItem("calculatorpro.unsavedDraft");
     const option = document.querySelector(`#courseSelect option[value="${courseAtStart}"]`);
     if (option && data.name) {
       option.dataset.courseName = data.name;
@@ -1003,12 +1071,14 @@ function flushSaveSync() {
   clearTimeout(saveTimer);
   saveTimer = null;
   if (!courseId || !saveDirty) return true;
+  if (sessionStopped) { retainDraft(); return false; }
   const name = document.getElementById("courseNameInput").value.trim();
   try {
     const xhr = new XMLHttpRequest();
     xhr.open("PATCH", `/api/courses/${courseId}`, false);
     xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.send(JSON.stringify({ name, settings: collectSettings() }));
+    xhr.setRequestHeader("X-Course-Revision", courseRevision);
+    xhr.send(JSON.stringify({ name, settings: collectSettings(), base: editBase }));
     if (xhr.status >= 200 && xhr.status < 300) {
       saveDirty = false;
       setSaveStatus("saved", "已保存");
@@ -1070,19 +1140,21 @@ function renderTerms() {
   if (currentTermId) select.value = String(currentTermId);
 }
 
-function applyCoursePayload(data) {
+function applyCoursePayload(data, useSnapshot = false) {
   savePaused = true;
   clearTimeout(saveTimer);
   saveTimer = null;
   saveDirty = false;
   try {
   courseId = data.id;
+  courseRevision = data.edit_revision || data.updated_at || "";
+  editBase = { name: data.name, settings: data.settings, term_id: data.current_term_id };
   localStorage.setItem(COURSE_KEY, String(courseId));
   document.getElementById("courseSelect").value = String(courseId);
   document.getElementById("courseNameInput").value = data.name || "";
   state = defaultState();
   applyServerSettings(data.settings || {});
-  overlayTerm(data.current_term);
+  if (!useSnapshot) overlayTerm(data.current_term);
   if (!data.current_term) state.studentCount = "";
   terms = data.terms || [];
   currentTermId = data.current_term_id || (data.current_term && data.current_term.id) || null;
@@ -1357,6 +1429,7 @@ async function loadMe() {
     if (!response.ok) return;
     const data = await response.json();
     document.getElementById("who").textContent = data.username || "";
+    currentUserId = data.id;
   } catch (err) {
     /* 未登录时 api() 会跳转 */
   }
@@ -2553,6 +2626,35 @@ bindOnce();
 bindDialogs();
 renderAll();
 afterCourseLoaded();
-loadCourses();
 loadAiStatus();
-loadMe();
+async function startPage() {
+  await loadMe();
+  if (sessionStopped) return;
+  await loadCourses();
+  let draft;
+  try { draft = JSON.parse(sessionStorage.getItem("calculatorpro.unsavedDraft") || "null"); } catch (_) {}
+  if (draft && draft.userId === currentUserId && draft.courseId === courseId && draft.termId === currentTermId) {
+    applyServerSettings(draft.settings);
+    document.getElementById("courseNameInput").value = draft.name;
+    courseRevision = draft.revision;
+    editBase = draft.base;
+    renderAll();
+    saveDirty = true;
+    showResult("已找回本页未保存的修改，正在检查并保存。", false);
+    await flushSave().catch(() => {});
+  }
+}
+for (const [id, key] of [["useLocalEdits", "local_choice"], ["useSavedEdits", "saved_choice"]]) {
+  document.getElementById(id).addEventListener("click", async () => {
+    if (!conflictReply || !conflictReply[key]) return;
+    const data = conflictReply;
+    const base = { name: data.latest.name, settings: data.latest.settings, term_id: data.latest.current_term_id };
+    applyCoursePayload({ ...data.latest, ...data[key] }, true);
+    editBase = base;
+    document.getElementById("dlgEditConflict").close();
+    conflictReply = null;
+    saveDirty = true;
+    await flushSave().catch(() => {});
+  });
+}
+startPage().catch(err => { if (err.message !== "未登录") showResult(err.message || "页面加载失败", true); });

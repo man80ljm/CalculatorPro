@@ -555,10 +555,12 @@ def test_password_change_revokes_other_sessions(app):
         assert first.post("/api/login", json={"username": "multi-device", "password": PASSWORD}).status_code == 200
         assert second.post("/api/login", json={"username": "multi-device", "password": PASSWORD}).status_code == 200
         assert second.get("/api/me").status_code == 200
-        changed = first.post("/api/password", json={"current_password": PASSWORD, "new_password": "another-pass-1"})
+        assert first.get("/api/me").status_code == 401
+        # 新规则下只有第二次登录有效；同时检查修改密码仍保留当前会话。
+        changed = second.post("/api/password", json={"current_password": PASSWORD, "new_password": "another-pass-1"})
         assert changed.status_code == 200, changed.text
-        assert first.get("/api/me").status_code == 200
-        assert second.get("/api/me").status_code == 401
+        assert first.get("/api/me").status_code == 401
+        assert second.get("/api/me").status_code == 200
 
 
 def test_client_key_only_trusts_forwarded_from_proxies(monkeypatch):
