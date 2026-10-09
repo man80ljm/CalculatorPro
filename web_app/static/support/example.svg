@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320" role="img" aria-labelledby="title description">
+  <title id="title">收款码示例</title>
+  <desc id="description">这是收款码位置的示例图片，暂不能付款，需要替换为真实收款码。</desc>
+  <rect x="1" y="1" width="318" height="318" rx="18" fill="#f8fbf9" stroke="#d4e4db" stroke-width="2"/>
+  <path d="M34 74V34h40M246 34h40v40M286 246v40h-40M74 286H34v-40" fill="none" stroke="#86b39f" stroke-width="4" stroke-linecap="round"/>
+  <g fill="none" stroke="#327f68" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M114 112h79v43a29 29 0 0 1-29 29h-21a29 29 0 0 1-29-29z" fill="#e5f2eb"/>
+    <path d="M194 121h9a18 18 0 0 1 0 36h-12M103 195h101"/>
+    <path d="M136 91c-11-12 11-17 0-29M157 91c-11-12 11-17 0-29M178 91c-11-12 11-17 0-29" stroke="#9cbfaf" stroke-width="4"/>
+  </g>
+  <g text-anchor="middle" font-family="Microsoft YaHei, PingFang SC, sans-serif">
+    <text x="160" y="233" fill="#246852" font-size="20" font-weight="700">收款码示例</text>
+    <text x="160" y="262" fill="#61746b" font-size="15">待替换 · 暂不能付款</text>
+  </g>
+</svg>

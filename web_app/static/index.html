@@ -429,8 +429,8 @@
           <p id="reportError" class="report-error" hidden></p>
         </div>
         <footer class="dlg-foot">
-          <button type="button" class="secondary" data-close>关闭</button>
-          <button type="button" id="reportDownload" hidden>下载报告</button>
+          <div class="report-primary-actions"><button type="button" class="secondary" data-close>关闭</button><button type="button" id="reportDownload" hidden>下载报告</button></div>
+          <button type="button" class="support-link" id="reportSupportBtn" data-open="dlgSupport" hidden>请服务器喝杯咖啡 ☕</button>
         </footer>
       </form>
     </dialog>
@@ -459,8 +459,23 @@
         <footer class="dlg-foot"><button type="button" class="secondary" id="cancelDeleteVersion" data-close>暂不删除</button><button type="button" class="danger" id="confirmDeleteVersion">删除这一版</button></footer>
       </div>
     </dialog>
+    <dialog class="dlg dlg-support" id="dlgSupport" aria-labelledby="dlgSupportTitle" aria-describedby="supportIntro">
+      <div class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgSupportTitle">请服务器喝杯咖啡 ☕</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <div class="support-welcome">
+            <div class="coffee-server" aria-hidden="true"><span></span><span></span><span></span><i>☕</i></div>
+            <div><p class="support-greeting">今天也在认真算分。</p><p id="supportIntro">如果它帮您省了时间，欢迎请它喝杯咖啡。金额随意，感谢支持。</p></div>
+          </div>
+          <p class="hint support-purpose">这杯“咖啡”用于支持服务器运行。完全自愿，不赞助也能正常使用。</p>
+          <div class="support-methods" id="supportMethods"></div>
+          <p class="hint support-help" id="supportHelp">用微信扫描收款码；手机上可先保存图片，再到微信中识别。</p>
+        </div>
+        <footer class="dlg-foot"><button type="button" class="secondary" data-close>关闭</button></footer>
+      </div>
+    </dialog>
   </main>
-  <footer class="note">课程和资料会保存在你的账号下。报告生成后，可以到课程资料中查看和下载。</footer>
+  <footer class="note page-note"><span>课程和资料会保存在你的账号下。报告生成后，可以到课程资料中查看和下载。</span><button type="button" class="support-link" id="supportBtn" data-open="dlgSupport" hidden>请服务器喝杯咖啡 ☕</button></footer>
   <script src="/static/relation_grid.js"></script>
   <script src="/static/app.js"></script>
 </body>

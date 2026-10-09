@@ -1670,6 +1670,7 @@ async function downloadReportJob(jobId) {
 }
 
 async function watchReportJob(jobId) {
+  document.getElementById("reportSupportBtn").hidden = true;
   const token = ++reportWatch;
   reportPending = true;
   const watchedCourse = courseId;
@@ -1726,6 +1727,7 @@ async function watchReportJob(jobId) {
       errorNode.hidden = true;
       download.hidden = false;
       download.onclick = () => downloadReportJob(jobId);
+      syncSupportButtons();
       await refreshFiles();
       if (token !== reportWatch || courseId !== watchedCourse || currentTermId !== watchedTerm) return;
       reportPending = false;
@@ -1772,6 +1774,7 @@ async function generateReport() {
   errorNode.hidden = true;
   errorNode.textContent = "";
   download.hidden = true;
+  document.getElementById("reportSupportBtn").hidden = true;
   if (!document.getElementById("dlgReport").open) openDialog("dlgReport");
   setBusy(true);
   try {
@@ -2837,3 +2840,55 @@ for (const [id, key] of [["useLocalEdits", "local_choice"], ["useSavedEdits", "s
   });
 }
 startPage().catch(err => { if (err.message !== "未登录") showResult(err.message || "页面加载失败", true); });
+
+/* 赞助入口独立于课程操作。只有配置的图片实际可用时才显示。 */
+function syncSupportButtons() {
+  const ready = document.getElementById("supportMethods").childElementCount > 0;
+  document.getElementById("supportBtn").hidden = !ready;
+  document.getElementById("reportSupportBtn").hidden = !ready || document.getElementById("reportDownload").hidden || !document.getElementById("reportError").hidden;
+}
+
+async function loadSupport() {
+  const methods = document.getElementById("supportMethods");
+  try {
+    const response = await fetch("/static/support.json", { cache: "no-store" });
+    if (!response.ok) return;
+    const config = await response.json();
+    if (!config || typeof config !== "object" || Array.isArray(config)) return;
+    const preview = config.preview === true;
+    const cards = await Promise.all([["wechat", "微信"]].map(([key, name]) => {
+      const path = config[key];
+      const validPath = typeof path === "string" && (/^\/static\/support\/[a-zA-Z0-9_-]+\.(png|jpe?g|webp)$/i.test(path) || (preview && path === "/static/support/example.svg"));
+      if (!validPath) return null;
+      return new Promise(resolve => {
+        const image = new Image();
+        const timer = setTimeout(() => { image.removeAttribute("src"); resolve(null); }, 8000);
+        image.alt = preview ? `${name}收款码示例，暂不能付款` : `${name}收款码`;
+        image.onload = () => {
+          clearTimeout(timer);
+          if (!image.naturalWidth || !image.naturalHeight) return resolve(null);
+          const card = document.createElement("div");
+          card.className = "support-method";
+          const title = document.createElement("h3");
+          title.textContent = preview ? `${name}（示例）` : name;
+          const download = document.createElement("a");
+          download.href = path;
+          download.download = `${name}${preview ? "示例" : "收款码"}.${path.split(".").pop()}`;
+          download.textContent = preview ? "保存示例图片" : "保存收款码";
+          card.append(title, image, download);
+          resolve(card);
+        };
+        image.onerror = () => { clearTimeout(timer); resolve(null); };
+        image.src = path;
+      });
+    }));
+    methods.replaceChildren(...cards.filter(Boolean));
+    document.getElementById("supportHelp").textContent = preview
+      ? "当前为示例图片，暂不能付款。替换真实收款码后即可使用。"
+      : "用微信扫描收款码；手机上可先保存图片，再到微信中识别。";
+    syncSupportButtons();
+  } catch (_) {
+    // 配置或图片不可用时保持入口隐藏，不影响老师正常操作。
+  }
+}
+loadSupport();
