@@ -1639,10 +1639,12 @@ async function watchReportJob(jobId) {
     if (token !== reportWatch) return;
     if (courseId !== watchedCourse || currentTermId !== watchedTerm) return;
     const resume = document.getElementById("reportResume");
-    resume.hidden = false;
-    document.getElementById("reportResumeText").textContent = data.stage_label || "报告正在生成…";
-    document.getElementById("reportResumeOpen").onclick = () => openDialog("dlgReport");
-    document.getElementById("reportResumeOpen").textContent = "查看进度";
+    resume.hidden = data.done || Boolean(data.error);
+    if (!resume.hidden) {
+      document.getElementById("reportResumeText").textContent = data.stage_label || "报告正在生成…";
+      document.getElementById("reportResumeOpen").onclick = () => openDialog("dlgReport");
+      document.getElementById("reportResumeOpen").textContent = "查看进度";
+    }
     if (!data.done) download.hidden = true;
     stageNode.textContent = data.stage_label || "正在生成报告…";
     bar.value = Number(data.percent) || 0;
@@ -1661,9 +1663,6 @@ async function watchReportJob(jobId) {
       errorNode.hidden = true;
       download.hidden = false;
       download.onclick = () => downloadReportJob(jobId);
-      document.getElementById("reportResumeText").textContent = "报告已生成，可以下载。";
-      document.getElementById("reportResumeOpen").textContent = "下载报告";
-      document.getElementById("reportResumeOpen").onclick = () => downloadReportJob(jobId);
       await refreshFiles();
       if (token !== reportWatch || courseId !== watchedCourse || currentTermId !== watchedTerm) return;
       reportPending = false;
@@ -1689,8 +1688,6 @@ async function restoreReportJob() {
     if (!response.ok || wanted !== courseId || wantedTerm !== currentTermId) return;
     const data = await response.json();
     if (!data.job) return;
-    const button = document.getElementById("reportResumeOpen");
-    button.textContent = "查看进度";
     if (data.job.done) {
       renderResultCard();
     } else if (!data.job.error) {
@@ -1830,17 +1827,6 @@ function resultNote(data) {
   return "本学期尚未计算";
 }
 
-function renderReportState() {
-  if (reportPending) return;
-  const banner = document.getElementById("reportResume");
-  banner.hidden = !reportState;
-  if (!reportState) return;
-  document.getElementById("reportResumeText").textContent = reportState.message;
-  const button = document.getElementById("reportResumeOpen");
-  button.textContent = reportState.status === "stale" ? "下载旧报告" : "下载报告";
-  button.onclick = () => downloadSaved({ id: reportState.archive_file_id });
-}
-
 function clearStoredResults() {
   Object.keys(localStorage)
     .filter((key) => key.startsWith(RESULT_PREFIX))
@@ -1862,7 +1848,8 @@ function stat(label, value, strong) {
 
 /* 主界面的结果卡片：总达成度 + 关键数字，详情在弹窗里 */
 function renderResultCard() {
-  renderReportState();
+  // 只在生成过程中显示进度入口；已生成报告统一从课程资料下载。
+  if (!reportPending) document.getElementById("reportResume").hidden = true;
   const card = document.getElementById("resultCard");
   card.innerHTML = "";
   const data = loadStoredResult();
