@@ -32,6 +32,19 @@
       <footer class="dlg-foot"><button type="button" id="useSavedEdits" class="secondary">使用已保存的这几项</button><button type="button" id="useLocalEdits">保留本页的这几项</button></footer>
       </div>
     </dialog>
+    <dialog class="dlg" id="dlgNewCourse" aria-labelledby="dlgNewCourseTitle">
+      <form class="dlg-inner" id="newCourseForm">
+        <header class="dlg-head"><h2 id="dlgNewCourseTitle">新建空白课程</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <label class="field">课程名称
+            <input id="newCourseName" type="text" maxlength="120" required placeholder="例如：立体构成" autocomplete="off">
+          </label>
+          <p class="hint">资料按课程名称保存。建课后，请展开“检查与修改”填写课程信息。</p>
+          <p class="form-error" id="newCourseError" role="alert" hidden></p>
+        </div>
+        <footer class="dlg-foot"><button type="button" class="secondary" data-close>取消</button><button type="submit" id="createBlankCourse">创建课程</button></footer>
+      </form>
+    </dialog>
     <section id="passwordPanel" hidden>
       <h2>修改密码</h2>
       <div class="fields">

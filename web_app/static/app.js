@@ -972,7 +972,7 @@ function scheduleSave() {
 
 function editTarget(node) {
   if (!node || !node.closest) return false;
-  if (node.closest("#passwordPanel, #dlgWizard, #dlgConfirm, #dlgReport, #dlgRegister, #dlgImportTerm")) return false;
+  if (node.closest("#passwordPanel, #dlgWizard, #dlgConfirm, #dlgReport, #dlgRegister, #dlgImportTerm, #dlgNewCourse")) return false;
   if (node.id === "courseSelect" || node.id === "termSelect" || node.id === "saveStatus") return false;
   if ((node.type || "") === "file") return false;
   return Boolean(node.closest("main"));
@@ -1337,32 +1337,45 @@ function bindOnce() {
       if (previous) event.target.value = String(previous);
     }
   });
-  document.getElementById("newCourseBtn").addEventListener("click", async () => {
-    const button = document.getElementById("newCourseBtn");
+  document.getElementById("newCourseBtn").addEventListener("click", () => {
+    document.getElementById("newCourseForm").reset();
+    document.getElementById("newCourseError").hidden = true;
+    openDialog("dlgNewCourse");
+  });
+  document.getElementById("newCourseForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = document.getElementById("createBlankCourse");
+    const name = document.getElementById("newCourseName").value.trim();
+    const error = document.getElementById("newCourseError");
+    error.hidden = true;
+    if (!name) { error.textContent = "请输入课程名称。"; error.hidden = false; return; }
+    if (button.disabled) return;
     button.disabled = true;
-    const name = document.getElementById("courseNameInput").value.trim() || "未命名课程";
     try {
       if (courseId) await saveCourse();
       const response = await api("/api/courses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, settings: { course_open_info: { course_name: name }, course_basic_info: { course_name: name } } }),
       });
       if (response.status === 409) {
         const data = await response.json();
         if (data.code === "existing_course") {
+          closeDialog(document.getElementById("dlgNewCourse"), true);
           const choice = await askExistingCourse(data, false);
           if (choice) await loadCourses(choice.course.id);
           return;
         }
-        return showResult(data.detail || "新建失败", true);
+        throw new Error(data.detail || "新建失败");
       }
-      if (!response.ok) return showResult(await errorMessage(response), true);
+      if (!response.ok) throw new Error(await errorMessage(response));
       const data = await response.json();
+      closeDialog(document.getElementById("dlgNewCourse"), true);
       await loadCourses(data.id);
-      showResult(`已新建课程文件夹：${data.name}`, false);
+      document.getElementById("reviewSection").open = true;
+      showResult(`已创建“${data.name}”，请在“检查与修改”中填写课程信息。`, false);
     } catch (err) {
-      if (err.message !== "未登录") showResult(err.message || "新建失败", true);
+      if (err.message !== "未登录") { error.textContent = err.message || "新建失败，请重试。"; error.hidden = false; }
     } finally {
       button.disabled = false;
     }
