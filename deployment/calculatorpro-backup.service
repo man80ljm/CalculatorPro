@@ -7,6 +7,9 @@ Requires=docker.service
 Type=oneshot
 EnvironmentFile=/etc/calculatorpro-backup.env
 WorkingDirectory=/data/projects/calculatorpro
-ExecStart=/usr/bin/bash /data/projects/calculatorpro/scripts/nightly_backup.sh
+ExecStartPre=/usr/bin/bash /data/ops/calculatorpro-backup/backup_recover_web.sh
+ExecStart=/usr/bin/bash /data/ops/calculatorpro-backup/nightly_backup.sh
+ExecStopPost=/usr/bin/bash /data/ops/calculatorpro-backup/backup_recover_web.sh
+Environment=TZ=Asia/Shanghai
 UMask=0077
 TimeoutStartSec=1800

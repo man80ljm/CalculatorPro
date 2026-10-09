@@ -2,7 +2,7 @@ import os
 import sqlite3
 import pytest
 from cryptography.exceptions import InvalidTag
-from scripts.backup_bundle import make_bundle, verify_bundle, upload_qiniu
+from scripts.backup_bundle import make_bundle, verify_bundle, upload_qiniu, download_qiniu
 
 
 @pytest.fixture
@@ -81,6 +81,7 @@ def test_qiniu_upload_verifies_remote_hash_and_preserves_local_on_failure(source
         calls.append(object_key)
         return {"key": object_key}, SimpleNamespace(status_code=200)
     monkeypatch.setattr(qiniu, "put_file", put)
+    monkeypatch.setattr(qiniu.BucketManager, "bucket_info", lambda *args: ({"private": 1}, SimpleNamespace(status_code=200)))
     monkeypatch.setattr(qiniu.BucketManager, "stat", lambda *args: ({"hash": qiniu.etag(str(package)), "fsize": package.stat().st_size}, SimpleNamespace(status_code=200)))
     objects = upload_qiniu(package)
     assert objects == calls
@@ -89,3 +90,41 @@ def test_qiniu_upload_verifies_remote_hash_and_preserves_local_on_failure(source
     with pytest.raises(RuntimeError, match="校验失败"):
         upload_qiniu(package)
     assert package.is_file()
+
+
+def test_public_bucket_blocks_upload(source, tmp_path, monkeypatch):
+    import qiniu
+    from types import SimpleNamespace
+    database, uploads, code, key = source
+    package = make_bundle(database, uploads, code, tmp_path / "backups", key, "sqlite")
+    for name,value in {"QINIU_ACCESS_KEY":"test-access","QINIU_SECRET_KEY":"test-secret","QINIU_BACKUP_BUCKET":"test-public","QINIU_BACKUP_PRIVATE":"1"}.items():
+        monkeypatch.setenv(name,value)
+    monkeypatch.setattr(qiniu.BucketManager,"bucket_info",lambda *args: ({"private":0},SimpleNamespace(status_code=200)))
+    monkeypatch.setattr(qiniu,"put_file",lambda *args,**kwargs: pytest.fail("公开空间不能上传"))
+    with pytest.raises(ValueError,match="私有空间"):
+        upload_qiniu(package)
+
+
+def test_monthly_retention_policy_and_private_download(source, tmp_path, monkeypatch):
+    import qiniu,boto3,io
+    from types import SimpleNamespace
+    database, uploads, code, key = source
+    package = make_bundle(database, uploads, code, tmp_path / "backups", key, "sqlite")
+    for name,value in {"QINIU_ACCESS_KEY":"test-access","QINIU_SECRET_KEY":"test-secret","QINIU_BACKUP_BUCKET":"test-private","QINIU_BACKUP_PRIVATE":"1"}.items():
+        monkeypatch.setenv(name,value)
+    monkeypatch.setattr(qiniu.BucketManager,"bucket_info",lambda *args: ({"private":1},SimpleNamespace(status_code=200)))
+    policies=[]
+    monkeypatch.setattr(qiniu.Auth,"upload_token",lambda self,bucket,key,expires,policy: policies.append(policy) or 'test-token')
+    monkeypatch.setattr(qiniu,"put_file",lambda *args,**kwargs: ({},SimpleNamespace(status_code=200)))
+    monkeypatch.setattr(qiniu.BucketManager,"stat",lambda *args: ({"hash":qiniu.etag(str(package)),"fsize":package.stat().st_size},SimpleNamespace(status_code=200)))
+    objects=upload_qiniu(package,include_monthly=True)
+    assert [p["deleteAfterDays"] for p in policies]==[30,365]
+    assert all(p["insertOnly"]==1 for p in policies)
+    def client(service,**kwargs):
+        assert kwargs["endpoint_url"]=="https://s3.cn-south-1.qiniucs.com"
+        return SimpleNamespace(get_object=lambda **args: {"Body":io.BytesIO(package.read_bytes()),"ContentLength":package.stat().st_size})
+    monkeypatch.setattr(boto3,"client",client)
+    downloaded=download_qiniu(objects[0],tmp_path/'cloud.cpbackup')
+    assert verify_bundle(downloaded,key)["files"]
+    with pytest.raises(ValueError,match="覆盖"):
+        download_qiniu(objects[0],downloaded)

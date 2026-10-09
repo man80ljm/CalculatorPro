@@ -1,0 +1,14 @@
+[Unit]
+Description=Recover CalculatorPro after an interrupted backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/calculatorpro-backup.env
+WorkingDirectory=/data/projects/calculatorpro
+ExecStart=/usr/bin/bash /data/ops/calculatorpro-backup/backup_recover_web.sh
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

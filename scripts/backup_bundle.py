@@ -10,6 +10,7 @@ import shutil
 import tarfile
 import tempfile
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 MAGIC = b"CPB1"
@@ -173,29 +174,79 @@ def verify_bundle(package, key_file, restore_dir=None):
         return manifest
 
 
-def upload_qiniu(package):
+def _qiniu_connection():
     import qiniu
     values = [os.environ.get(name, "").strip() for name in ("QINIU_ACCESS_KEY", "QINIU_SECRET_KEY", "QINIU_BACKUP_BUCKET")]
     if not all(values) or os.environ.get("QINIU_BACKUP_PRIVATE") != "1":
         raise ValueError("请配置七牛备份凭据，并确认使用私有空间。")
     access, secret, bucket = values
     auth = qiniu.Auth(access, secret)
-    manager = qiniu.BucketManager(auth)
+    # 保持SDK自动查询区域；创建空的自定义Region会使上传端点为空。
+    qiniu.config.get_default("default_zone").scheme = "https"
+    manager = qiniu.BucketManager(auth, preferred_scheme="https")
+    details, info = manager.bucket_info(bucket)
+    if info.status_code != 200 or not details or details.get("private") != 1:
+        raise ValueError("备份空间不是已确认的私有空间，已停止上传或下载。")
+    return auth, manager, bucket, access, secret
+
+
+def upload_qiniu(package, include_monthly=False):
+    import qiniu
+    auth, manager, bucket, _, _ = _qiniu_connection()
     prefix = "calculatorpro-backups/v1/"
-    today = datetime.now(timezone.utc)
+    today = datetime.now(ZoneInfo("Asia/Shanghai"))
     daily = f"{prefix}daily/{today:%Y-%m-%d}/{Path(package).name}"
     keys = [daily]
-    if today.day == 1:
+    if today.day == 1 or include_monthly:
         keys.append(f"{prefix}monthly/{today:%Y-%m}/{Path(package).name}")
     for object_key in keys:
-        token = auth.upload_token(bucket, object_key, 3600, {"insertOnly": 1})
-        result, info = qiniu.put_file(token, object_key, str(package), version="v2")
+        days = 365 if "/monthly/" in object_key else 30
+        token = auth.upload_token(bucket, object_key, 3600, {"insertOnly": 1, "deleteAfterDays": days})
+        result, info = qiniu.put_file(token, object_key, str(package), version="v2", bucket_name=bucket)
         if result is None or info.status_code != 200:
             raise RuntimeError("七牛备份上传失败，本地备份已保留。")
         remote, info = manager.stat(bucket, object_key)
         if info.status_code != 200 or remote is None or remote.get("hash") != qiniu.etag(str(package)) or remote.get("fsize") != Path(package).stat().st_size:
             raise RuntimeError("七牛备份校验失败，本地备份已保留。")
     return keys
+
+
+def download_qiniu(object_key, destination):
+    """从七牛HTTPS S3接口下载加密包；不依赖公开域名，不覆盖已有文件。"""
+    import boto3
+    from botocore.config import Config
+    if not object_key.startswith("calculatorpro-backups/v1/") or not object_key.endswith(".cpbackup"):
+        raise ValueError("只能下载CalculatorPro加密备份。")
+    _, _, bucket, access, secret = _qiniu_connection()
+    region = os.environ.get("QINIU_S3_REGION", "cn-south-1")
+    if region not in {"cn-east-1", "cn-east-2", "cn-north-1", "cn-south-1", "us-north-1", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3"}:
+        raise ValueError("七牛S3区域配置不正确。")
+    target = Path(destination).resolve()
+    if target.exists():
+        raise ValueError("下载不能覆盖已有文件。")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    client = boto3.client("s3", endpoint_url=f"https://s3.{region}.qiniucs.com", region_name=region,
+        aws_access_key_id=access, aws_secret_access_key=secret,
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}, retries={"max_attempts": 2},
+                      connect_timeout=10, read_timeout=60, response_checksum_validation="when_required"))
+    response = client.get_object(Bucket=bucket, Key=object_key)
+    body = response["Body"]
+    size = int(response["ContentLength"])
+    try:
+        if shutil.disk_usage(target.parent).free < size + 200 * CHUNK:
+            raise ValueError("下载所需空间不足。")
+        with target.open("xb") as outgoing:
+            os.chmod(target, 0o600)
+            shutil.copyfileobj(body, outgoing, CHUNK)
+        with target.open("rb") as handle:
+            if target.stat().st_size != size or handle.read(4) != MAGIC:
+                raise ValueError("下载的备份不完整或格式不正确。")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        body.close()
+    return target
 
 
 def main():
@@ -216,6 +267,11 @@ def main():
         command.add_argument("--key-file", required=True)
     upload = commands.add_parser("upload")
     upload.add_argument("--package", required=True)
+    upload.add_argument("--monthly", action="store_true")
+    upload.add_argument("--result-file")
+    download = commands.add_parser("download")
+    download.add_argument("--object-key", required=True)
+    download.add_argument("--destination", required=True)
     args = parser.parse_args()
     if args.command == "pack":
         package = make_bundle(args.dump, args.uploads, args.code, args.destination, args.key_file, args.format)
@@ -228,12 +284,20 @@ def main():
     elif args.command == "verify":
         manifest = verify_bundle(args.package, args.key_file, args.restore_dir)
         print(f"备份校验通过：{len(manifest['files'])} 个文件")
-    else:
+    elif args.command == "upload":
         with Path(args.package).open("rb") as handle:
             if handle.read(4) != MAGIC:
                 raise ValueError("仅允许上传加密后的备份。")
-        keys = upload_qiniu(args.package)
+        keys = upload_qiniu(args.package, args.monthly)
+        if args.result_file:
+            Path(args.result_file).write_text(json.dumps({"package": str(Path(args.package).resolve()),
+                "sha256": digest(args.package), "bytes": Path(args.package).stat().st_size,
+                "bucket": os.environ["QINIU_BACKUP_BUCKET"], "objects": keys,
+                "uploaded_at": datetime.now(timezone.utc).isoformat()}, ensure_ascii=False), encoding="utf-8")
         print(f"七牛上传并校验完成：{len(keys)} 份")
+    else:
+        download_qiniu(args.object_key, args.destination)
+        print("七牛加密备份已下载，请再执行verify进行解密及逐文件校验。")
 
 
 if __name__ == "__main__":
