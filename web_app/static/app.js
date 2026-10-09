@@ -1184,11 +1184,6 @@ function applyCoursePayload(data, useSnapshot = false) {
   currentTermId = data.current_term_id || (data.current_term && data.current_term.id) || null;
   courseFiles = data.files || [];
   importedHeadcount = 0;
-  const registerBanner = document.getElementById("registerBanner");
-  if (registerBanner) {
-    registerBanner.hidden = true;
-    registerBanner.textContent = "";
-  }
   renderTerms();
   renderAll();
   renderFiles();
@@ -2297,16 +2292,7 @@ function percentText(value) {
 }
 
 function registerSummary(data) {
-  const modeText = data.mode === "reverse" ? "逆向" : "正向";
-  const reason = data.reason || (data.detection && data.detection.reason) || "";
-  return `识别为${modeText}，共 ${data.student_count} 人。${reason}`;
-}
-
-function showRegisterBanner(data) {
-  const banner = document.getElementById("registerBanner");
-  if (!banner) return;
-  banner.hidden = false;
-  banner.textContent = registerSummary(data);
+  return `成绩已导入，共 ${data.student_count} 人。`;
 }
 
 function syncReimportButtons(mode) {
@@ -2328,7 +2314,7 @@ function showRegisterResult(data) {
   const root = document.getElementById("registerResult");
   root.innerHTML = "";
   const percents = data.percents || {};
-  root.append(el("p", { id: "registerDetect", class: "headcount-alert", text: registerSummary(data) }));
+  root.append(el("p", { text: `本次导入：${data.mode === "reverse" ? "逆向" : "正向"}。` }));
   root.append(el("p", { text: `识别 ${data.student_count} 人，实考 ${data.exam_count || data.student_count} 人。` }));
   root.append(el("p", { text: `上课班级：${data.class_name || (data.classes || []).join("、") || "未识别"}` }));
   if (data.mixed_classes) root.append(el("p", { class: "hint", text: "多个班级已合并导入，人数按整张成绩表统计。" }));
@@ -2338,7 +2324,7 @@ function showRegisterResult(data) {
     root.append(el("p", { class: loud ? "headcount-alert" : "wizard-reason", text: item }));
   });
   (data.conflicts || []).forEach((item) => root.append(el("p", { class: "wizard-reason", text: item })));
-  root.append(el("p", { class: "hint", text: "姓名和学号只留在本机这一学期的成绩文件里。" }));
+  root.append(el("p", { class: "hint", text: "成绩文件保存在你的账号下，按课程和学期管理。" }));
   const dlg = document.getElementById("dlgRegister");
   if (!dlg.open) openDialog("dlgRegister");
 }
@@ -2674,7 +2660,6 @@ async function importRegister(file, mode, extra) {
     await openCourse(courseId);
     importedHeadcount = Number(data.student_count) || 0;
     updateSummaries();
-    showRegisterBanner(data);
     showRegisterResult(data);
     showResult(registerSummary(data), false);
   } catch (err) {
