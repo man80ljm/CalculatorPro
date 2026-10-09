@@ -295,7 +295,7 @@ python -m web_app.migrate_v2 --downgrade --backup-dir ./backups
 
 当前计算槽和 AI 池仍属于进程内资源，部署继续使用一个 Uvicorn worker。`REPORT_WORKER_MODE=external` 仅用于专项测试或另行配置后台处理进程，不能直接据此增加生产 worker 数；正式发布前还需在 PostgreSQL 和服务器容器里验证这批改动。
 
-完整本地测试依赖：`pip install -r requirements-test.txt`，然后 `pytest -q`。新测试覆盖登录替换、保存冲突、学期身份保持、队列限量、过期租约接续、复用 AI 答案和异常文件限制。备份工具及服务器夜间任务的准备说明见 [docs/backup.md](docs/backup.md)。七牛真实凭据未配置时，不会上传云端；这批改动尚未部署。
+完整本地测试依赖：`pip install -r requirements-test.txt`，然后 `pytest -q`。新测试覆盖登录替换、保存冲突、学期身份保持、队列限量、过期租约接续、复用 AI 答案和异常文件限制。本地稳定性功能批次尚未部署；独立七牛备份任务已于2026-10-09启用，真实云端下载与隔离PostgreSQL恢复通过，详见 [docs/backup.md](docs/backup.md)。备份工具进一步验证后，全量测试为231 passed、1 skipped。
 
 本地新版最终验证：**229 passed、1 skipped**，与本轮接手时的208 passed相比新增21项通过用例。2026-10-09再次执行20人正向/逆向混合流程，每课35名合成学生、AI模拟等待3秒，20份报告成功、80次跨账号隔离检查通过、无外网请求。计算P95为8.23秒、统计表导出P95为9.68秒、报告完成P95为16.29秒；这些是本机短时模拟结果，不代表线上真实AI性能。实际强制终止隔离服务并重启后，原任务自动接续，已落盘的AI答案复用，成功事件与资料批次各保存一次。同一份正向/逆向成绩表在改动前后，达成度和表5所有单元格一致。详细改动文件与验证记录见 [docs/stability-20261009.md](docs/stability-20261009.md)。
 
