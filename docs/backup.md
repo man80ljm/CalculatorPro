@@ -27,7 +27,7 @@
 - 首份成功加密包：`calculatorpro-20261009T042034Z-de7d187c.cpbackup`，约4MB。日副本和本月副本均已上传，大小与七牛内容哈希验证通过。
 - 云端下载的SHA256与本地包一致；解密、166个清单文件校验通过；恢复到隔离PostgreSQL数据库后，1用户、2课程、3学期、37份资料、2大纲版本、3批资料、5条报告事件与备份前一致。37份数据库引用的资料均存在且大小正确。隔离验证库及明文恢复目录已清理。
 - `calculatorpro-backup.timer` 已 `enabled/active`，下一次为2026-10-10北京时间02:30:28；`calculatorpro-backup-recover.service` 已设为开机恢复保护。网站和数据库健康，本次两次制作快照各暂停网页约5秒。
-- 网站镜像仍为既有功能版本 `088d25e`；本次独立安装备份工具，没有发布本地稳定性功能批次。
+- 首次启用备份时网站镜像为`088d25e`，当时仅安装独立备份工具。之后稳定性版本`13c21d1`已发布，备份定时器与独立恢复保护继续启用，详见 [stability-deploy-20261009.md](stability-deploy-20261009.md)。
 - 最终本地测试：231 passed、1 skipped、1条依赖弃用警告；备份专项7项通过，Shell语法和systemd单元检查通过。
 
 服务器完成记录在 `/data/backups/calculatorpro/latest.json`，首次云端恢复验收在 `restore-verification.json`；失败会保留本地包并进入系统日志。主动失败通知和48小时未更新提醒尚未配置，不会发送邮件或外部消息。
