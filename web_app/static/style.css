@@ -223,6 +223,11 @@ button[hidden] { display: none !important; }
 }
 #result:empty { display: none; }
 #result.error { background: #fff6f4; color: var(--danger); border: 1px solid #f0d2cc; }
+.notice { margin: 12px 0; padding: 16px 20px; background: #e6f4ef; border: 1px solid #b7d8ca; border-radius: 12px; line-height: 1.7; }
+.notice[hidden] { display: none; }
+#sessionNotice { background: #fff3df; border-color: #e8bf77; }
+#sessionNotice p { margin: 0 0 8px; }
+#sessionNotice a { color: #075b48; font-weight: 700; }
 
 .mode-switch { display: flex; gap: 8px; }
 .mode-switch button[aria-pressed="true"] { background: var(--accent); color: white; }

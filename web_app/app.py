@@ -385,6 +385,7 @@ def _course_dict(db, course: Course) -> dict:
         "id": course.id,
         "name": course.name,
         "settings": term_curriculum(_settings_of(course), term),
+        "edit_settings": merge_settings(_settings_of(course), term) if term is not None else _settings_of(course),
         "latest_syllabus_version": _settings_of(course).get("syllabus_version", 1),
         "current_term_id": term.id if term is not None else None,
         "current_term": term_public(term, file_count(db, term.id)) if term is not None else None,
@@ -659,7 +660,7 @@ def create_app() -> FastAPI:
                 from web_app.edit_merge import merge_edits
                 local = {"name": body.get("name", course.name), "settings": absorb_relation_grid(body.get("settings") or {}, strict=False)}
                 mine, saved, conflicts = merge_edits({"name": base.get("name"), "settings": base.get("settings") or {}}, local,
-                                                    {"name": course.name, "settings": latest["settings"]})
+                                                    {"name": course.name, "settings": latest["edit_settings"]})
                 if conflicts:
                     raise ServiceError("其他窗口修改了相同内容，请确认这几项。本页填写内容已保留。", status=409,
                                        code="edit_conflict", latest=latest, conflicts=conflicts,

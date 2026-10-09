@@ -676,16 +676,16 @@ function syncIdleActions() {
   const hasCourse = Boolean(courseId);
   ["deleteCourseBtn"].forEach((id) => {
     const node = document.getElementById(id);
-    if (node) node.disabled = !hasCourse;
+    if (node) node.disabled = !hasCourse || sessionStopped;
   });
   const registerInput = document.getElementById("registerFile");
-  if (registerInput) registerInput.disabled = !hasCourse;
+  if (registerInput) registerInput.disabled = !hasCourse || sessionStopped;
   const reportBtn = document.getElementById("reportBtn");
   const hasGrade = courseFiles.some((file) => file.kind === "grade");
-  if (reportBtn) reportBtn.disabled = actionBusy || !hasGrade;
+  if (reportBtn) reportBtn.disabled = actionBusy || !hasGrade || sessionStopped;
   const reportHint = document.getElementById("reportHint");
   if (reportHint) {
-    reportHint.textContent = actionBusy ? "报告正在生成，请稍候…" : !hasCourse
+    reportHint.textContent = sessionStopped ? "请先重新登录，填写内容已保留。" : actionBusy ? "报告正在生成，请稍候…" : !hasCourse
       ? "请先新建或选择课程，再导入成绩登记表。" : !hasGrade ? "请先导入本学期的成绩登记表。" : "";
     reportHint.hidden = !reportHint.textContent;
   }
@@ -760,6 +760,7 @@ async function api(path, options) {
     notice.hidden = false;
     document.getElementById("sessionNoticeText").textContent = data.detail || "登录已过期，本页已停止保存。";
     setSaveStatus("error", "登录已失效，填写内容已保留");
+    syncIdleActions();
     throw new Error("未登录");
   }
   if (write && match && Number(match[1]) === courseId && response.ok) {
@@ -1026,7 +1027,8 @@ async function flushSave() {
     }
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
-    editBase = { name: data.name, settings: data.settings, term_id: data.current_term_id };
+    const savedSettings = data.edit_settings || data.settings;
+    editBase = { name: data.name, settings: savedSettings, term_id: data.current_term_id };
     courseRevision = data.edit_revision || courseRevision;
     const current = collectSettings();
     function adopt(sent, local, saved) {
@@ -1038,8 +1040,19 @@ async function flushSave() {
       }
       return local;
     }
-    applyServerSettings(adopt(settings, current, data.settings));
+    const active = document.activeElement;
+    const activeDialog = active && active.closest("dialog");
+    const inputIndex = activeDialog ? [...activeDialog.querySelectorAll("input,textarea")].indexOf(active) : -1;
+    const selection = active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
+    applyServerSettings(adopt(settings, current, savedSettings));
     renderAll();
+    const replacement = active && active.id ? document.getElementById(active.id) : inputIndex >= 0 ? activeDialog.querySelectorAll("input,textarea")[inputIndex] : null;
+    if (replacement) {
+      replacement.focus({ preventScroll: true });
+      if (selection && replacement.setSelectionRange) {
+        try { replacement.setSelectionRange(...selection); } catch (_) { /* 数字输入不支持文本选区。 */ }
+      }
+    }
     sessionStorage.removeItem("calculatorpro.unsavedDraft");
     const option = document.querySelector(`#courseSelect option[value="${courseAtStart}"]`);
     if (option && data.name) {
@@ -1056,7 +1069,7 @@ async function flushSave() {
   } catch (err) {
     if (courseId === courseAtStart) {
       saveDirty = true;
-      setSaveStatus("error", "保存失败（点此重试）");
+      setSaveStatus("error", sessionStopped ? "登录已失效，填写内容已保留" : conflictReply ? "有修改需要确认，内容已保留" : "保存失败（点此重试）");
       showResult(err.message || "保存失败", true);
     }
     throw err;
@@ -1148,7 +1161,7 @@ function applyCoursePayload(data, useSnapshot = false) {
   try {
   courseId = data.id;
   courseRevision = data.edit_revision || data.updated_at || "";
-  editBase = { name: data.name, settings: data.settings, term_id: data.current_term_id };
+  editBase = { name: data.name, settings: data.edit_settings || data.settings, term_id: data.current_term_id };
   localStorage.setItem(COURSE_KEY, String(courseId));
   document.getElementById("courseSelect").value = String(courseId);
   document.getElementById("courseNameInput").value = data.name || "";
@@ -1349,6 +1362,7 @@ function bindOnce() {
     flushSave().catch(() => {});
   });
   window.addEventListener("beforeunload", (event) => {
+    if (sessionStopped) { retainDraft(true); return; }
     if (!saveDirty && !saveTimer) return;
     saveDirty = true;
     if (!flushSaveSync()) {
@@ -1886,6 +1900,13 @@ function dialogDirty() {
 }
 
 function closeDialog(dlg, force) {
+  if (sessionStopped) {
+    retainDraft(true);
+    dialogSnapshot = null;
+    dlg.close();
+    updateSummaries();
+    return true;
+  }
   const savable = Boolean(dlg.querySelector("[data-save]"));
   if (!force && savable && dialogDirty()) {
     if (!window.confirm("有未保存的修改，确定放弃吗？")) return false;
@@ -2648,7 +2669,7 @@ for (const [id, key] of [["useLocalEdits", "local_choice"], ["useSavedEdits", "s
   document.getElementById(id).addEventListener("click", async () => {
     if (!conflictReply || !conflictReply[key]) return;
     const data = conflictReply;
-    const base = { name: data.latest.name, settings: data.latest.settings, term_id: data.latest.current_term_id };
+    const base = { name: data.latest.name, settings: data.latest.edit_settings || data.latest.settings, term_id: data.latest.current_term_id };
     applyCoursePayload({ ...data.latest, ...data[key] }, true);
     editBase = base;
     document.getElementById("dlgEditConflict").close();

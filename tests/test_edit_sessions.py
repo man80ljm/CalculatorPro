@@ -50,3 +50,22 @@ def test_same_field_conflict_preserves_both_choices(client):
     assert reply.json()["local_choice"]["settings"]["course_basic_info"]["hours"] == "80"
     assert reply.json()["saved_choice"]["settings"]["course_basic_info"]["hours"] == "64"
     assert client.get(path).json()["settings"]["course_basic_info"]["hours"] == "64"
+
+
+def test_save_response_contains_current_term_identity(client):
+    from scripts.local_load_test import grade_register, settings
+    course_id = _course(client, settings(), name="并发合成课程")
+    imported = client.post(f"/api/courses/{course_id}/grade-register", files={"file": ("合成成绩.xlsx", grade_register(1,35))})
+    assert imported.status_code == 200
+    path = f"/api/courses/{course_id}"
+    before = client.get(path).json()
+    values = deepcopy(before["edit_settings"])
+    values["course_basic_info"]["hours"] = "64"
+    first = client.patch(path, json={"settings": values}).json()
+    assert first["edit_settings"]["course_open_info"]["year_start"] == "2026"
+    assert first["edit_settings"]["course_open_info"]["semester"] == "1"
+    assert "year_start" not in first["settings"]["course_open_info"]
+    second = client.patch(path, json={"settings": first["edit_settings"]}).json()
+    assert second["current_term"]["year_start"] == "2026"
+    assert second["current_term"]["year_end"] == "2027"
+    assert second["current_term"]["semester"] == "1"
