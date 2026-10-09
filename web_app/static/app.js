@@ -52,6 +52,7 @@ function defaultState() {
 
 let state = defaultState();
 let courseId = null;
+let courseName = "";
 let courseFiles = [];
 let terms = [];
 let currentTermId = null;
@@ -76,7 +77,7 @@ function retainDraft(force = false) {
   if (!courseId || !currentUserId || (!saveDirty && !force)) return;
   try {
     sessionStorage.setItem("calculatorpro.unsavedDraft", JSON.stringify({ userId: currentUserId, courseId,
-      termId: currentTermId, name: document.getElementById("courseNameInput").value.trim(),
+      termId: currentTermId, name: courseName,
       settings: collectSettings(), revision: courseRevision, base: editBase }));
   } catch (_) { /* 页面仍保留原有填写内容。 */ }
 }
@@ -991,7 +992,7 @@ async function flushSave() {
   if (savePaused || sessionStopped || !courseId || !saveDirty) return null;
   saveDirty = false;
   const courseAtStart = courseId;
-  const name = document.getElementById("courseNameInput").value.trim();
+  const name = courseName;
   let settings;
   try {
     settings = collectSettings();
@@ -1035,6 +1036,7 @@ async function flushSave() {
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     const savedSettings = data.edit_settings || data.settings;
+    courseName = data.name;
     editBase = { name: data.name, settings: savedSettings, term_id: data.current_term_id };
     courseRevision = data.edit_revision || courseRevision;
     const current = collectSettings();
@@ -1092,7 +1094,7 @@ function flushSaveSync() {
   saveTimer = null;
   if (!courseId || !saveDirty) return true;
   if (sessionStopped) { retainDraft(); return false; }
-  const name = document.getElementById("courseNameInput").value.trim();
+  const name = courseName;
   try {
     const xhr = new XMLHttpRequest();
     xhr.open("PATCH", `/api/courses/${courseId}`, false);
@@ -1173,7 +1175,7 @@ function applyCoursePayload(data, useSnapshot = false) {
   editBase = { name: data.name, settings: data.edit_settings || data.settings, term_id: data.current_term_id };
   localStorage.setItem(COURSE_KEY, String(courseId));
   document.getElementById("courseSelect").value = String(courseId);
-  document.getElementById("courseNameInput").value = data.name || "";
+  courseName = data.name || "";
   state = defaultState();
   applyServerSettings(data.settings || {});
   if (!useSnapshot) overlayTerm(data.current_term);
@@ -1220,6 +1222,7 @@ async function loadCourses(preferId) {
   select.innerHTML = "";
   if (!courses.length) {
     courseId = null;
+    courseName = "";
     courseFiles = [];
     terms = [];
     currentTermId = null;
@@ -1395,7 +1398,7 @@ function bindOnce() {
   });
   document.getElementById("deleteCourseBtn").addEventListener("click", async () => {
     if (!courseId) return;
-    const name = document.getElementById("courseNameInput").value.trim() || "当前课程";
+    const name = courseName || "当前课程";
     if (!window.confirm(`删除课程文件夹「${name}」及其文件？`)) return;
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -2711,7 +2714,6 @@ async function startPage() {
   try { draft = JSON.parse(sessionStorage.getItem("calculatorpro.unsavedDraft") || "null"); } catch (_) {}
   if (draft && draft.userId === currentUserId && draft.courseId === courseId && draft.termId === currentTermId) {
     applyServerSettings(draft.settings);
-    document.getElementById("courseNameInput").value = draft.name;
     courseRevision = draft.revision;
     editBase = draft.base;
     renderAll();
