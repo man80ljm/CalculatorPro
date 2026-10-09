@@ -33,6 +33,7 @@ outputs/
 
 # Web secrets
 .env
+.local/
 backups/
 
 **/计算规则.docx
