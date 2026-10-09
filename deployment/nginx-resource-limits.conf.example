@@ -1,0 +1,17 @@
+# http {} 中添加（不能直接贴到 server {}）：
+limit_req_zone $binary_remote_addr zone=calculatorpro_requests:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=calculatorpro_login:10m rate=30r/m;
+limit_conn_zone $binary_remote_addr zone=calculatorpro_connections:10m;
+
+# 现有 CalculatorPro server {} 中添加：
+# limit_req zone=calculatorpro_requests burst=200 nodelay;
+# limit_req_status 429;
+# limit_conn calculatorpro_connections 100;
+# limit_conn_status 429;
+# client_max_body_size 20m;
+# client_body_timeout 20s;
+# client_header_timeout 20s;
+# keepalive_timeout 30s;
+# 登录接口的现有 location 中额外添加：
+# limit_req zone=calculatorpro_login burst=30 nodelay;
+# 学院内可能共用一个公网 IP，避免把阈值设得过低。

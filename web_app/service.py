@@ -9,6 +9,7 @@ import tempfile
 import zipfile
 from io import BytesIO
 from typing import Any
+from pathlib import Path
 
 import pandas as pd
 
@@ -20,6 +21,7 @@ from io_app.excel_templates import create_forward_template, create_reverse_templ
 from utils import get_resource_path, override_outputs_dir
 from web_app.ai_runner import generate_answers
 from web_app.download_names import settings_archive_filename
+from web_app.resource_limits import limited_computation
 
 SPREAD_MAP = {
     "大跨度（14-23分）": "large",
@@ -122,6 +124,8 @@ def _normalize_payload(payload: dict) -> dict:
     links = payload.get("links")
     if not isinstance(links, list) or not links:
         raise ServiceError("请先填写课程考核与课程目标对应关系")
+    if len(links) > 30 or sum(len(link["methods"]) for link in links if isinstance(link, dict) and isinstance(link.get("methods"), list)) > 150:
+        raise ServiceError("考核项目过多，请将考核环节控制在 30 个、考核方式控制在 150 个以内。")
     cleaned_links = []
     ratio_sum = 0.0
     for link in links:
@@ -172,6 +176,8 @@ def _normalize_payload(payload: dict) -> dict:
         objectives_count = 0
     if objectives_count <= 0:
         raise ServiceError("课程目标数量至少为 1")
+    if objectives_count > 30:
+        raise ServiceError("课程目标数量过多，最多支持 30 个。")
     normalized = dict(payload)
     normalized["objectives_count"] = objectives_count
     normalized["links"] = cleaned_links
@@ -347,6 +353,10 @@ def _open_info_for_report(settings: dict) -> dict:
 
 def _prepare_workspace(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict):
     """Yields (work_dir, outputs_dir, input_path, previous_path, payload). Caller cleans up."""
+    from web_app.resource_limits import validate_document
+    validate_document(excel_bytes, "grade.xlsx")
+    if previous_bytes:
+        validate_document(previous_bytes, "previous.xlsx")
     payload = _normalize_payload(settings.get("relation_payload") or {})
     settings = dict(settings)
     settings["relation_payload"] = payload
@@ -364,6 +374,7 @@ def _prepare_workspace(excel_bytes: bytes, previous_bytes: bytes | None, setting
     return work_dir, outputs_dir, input_path, previous_path, payload, settings
 
 
+@limited_computation
 def build_template(settings: dict) -> tuple[str, bytes]:
     payload = _normalize_payload(settings.get("relation_payload") or {})
     mode = settings.get("mode") or "forward"
@@ -394,6 +405,7 @@ def build_template(settings: dict) -> tuple[str, bytes]:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+@limited_computation
 def run_calculation(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, captured: list | None = None) -> dict:
     work_dir, outputs_dir, input_path, previous_path, payload, settings = _prepare_workspace(
         excel_bytes, previous_bytes, settings
@@ -426,6 +438,7 @@ def run_calculation(excel_bytes: bytes, previous_bytes: bytes | None, settings: 
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+@limited_computation
 def run_export(excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, captured: list | None = None) -> tuple[str, bytes, dict]:
     work_dir, outputs_dir, input_path, previous_path, payload, settings = _prepare_workspace(
         excel_bytes, previous_bytes, settings
@@ -473,19 +486,29 @@ def _ai_answer_error(answers) -> str:
 
 
 def run_report_pipeline(
-    excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, on_stage=None
+    excel_bytes: bytes, previous_bytes: bytes | None, settings: dict, on_stage=None, checkpoint_dir=None
 ) -> ReportBundle:
     """同一个临时目录里只跑一次成绩处理，再写分析稿并打包。on_stage 在进入每个阶段时调用。"""
 
+    from web_app.resource_limits import computation_slot
+    compute = None
     def enter(stage: str) -> None:
+        nonlocal compute
+        if stage == "ai" and compute is not None:
+            compute.__exit__(None, None, None)
+            compute = None
+        elif stage != "ai" and compute is None:
+            compute = computation_slot()
+            compute.__enter__()
         if on_stage:
             on_stage(stage)
 
-    enter("calculate")
-    work_dir, outputs_dir, input_path, previous_path, payload, settings = _prepare_workspace(
-        excel_bytes, previous_bytes, settings
-    )
+    work_dir = None
     try:
+        enter("calculate")
+        work_dir, outputs_dir, input_path, previous_path, payload, settings = _prepare_workspace(
+            excel_bytes, previous_bytes, settings
+        )
         with override_outputs_dir(outputs_dir):
             processor = _build_processor(settings, input_path, payload)
             _load_previous(processor, previous_path)
@@ -498,14 +521,24 @@ def run_report_pipeline(
             enter("ai")
             from web_app.deepseek_pool import PoolError, bound_account, configured, primary_key, redact_text, reserve
 
-            try:
-                ready = configured()
-            except PoolError as exc:
-                raise ServiceError(str(exc)) from None
-            if not ready:
-                raise ServiceError(AI_DISABLED_MESSAGE)
+            cache = Path(checkpoint_dir) / "answers.json" if checkpoint_dir else None
+            answers = None
+            if cache and cache.is_file():
+                try:
+                    saved = json.loads(cache.read_text(encoding="utf-8"))
+                    if isinstance(saved, list) and saved and all(isinstance(item, str) for item in saved):
+                        answers = saved
+                except (OSError, ValueError):
+                    pass
+            if answers is None:
+                try:
+                    ready = configured()
+                except PoolError as exc:
+                    raise ServiceError(str(exc)) from None
+                if not ready:
+                    raise ServiceError(AI_DISABLED_MESSAGE)
             extra = None
-            if bound_account() is None:
+            if answers is None and bound_account() is None:
                 extra = reserve("report").wait()
                 extra.bind()
             try:
@@ -518,14 +551,23 @@ def run_report_pipeline(
                 if word_limit < 1:
                     word_limit = 200
                 style = str(settings.get("report_style") or "专业")
-                answers = generate_answers(processor, count, style, word_limit)
+                if answers is None:
+                    answers = generate_answers(processor, count, style, word_limit)
                 failure = _ai_answer_error(answers)
                 if failure:
                     raise ServiceError(redact_text(f"AI 分析撰写失败：{failure}"))
+                if cache and not cache.is_file():
+                    temporary = cache.with_suffix(".tmp")
+                    with temporary.open("w", encoding="utf-8") as handle:
+                        json.dump(answers, handle, ensure_ascii=False)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, cache)
             finally:
                 if extra is not None:
                     extra.unbind()
                     extra.release()
+            enter("package")
             processor.generate_improvement_report(answers=answers, output_dir=outputs_dir)
             template_path = get_resource_path("report_template.docx")
             if not os.path.exists(template_path):
@@ -538,7 +580,6 @@ def run_report_pipeline(
                 basic,
                 {},
             )
-            enter("package")
             from web_app.grade_register import headcount_warnings
 
             warnings = headcount_warnings(
@@ -562,7 +603,10 @@ def run_report_pipeline(
             }
             return ReportBundle(filename, content, summary, files)
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        if compute is not None:
+            compute.__exit__(None, None, None)
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def run_ai_report(

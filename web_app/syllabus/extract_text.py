@@ -6,6 +6,7 @@ import io
 from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from web_app.resource_limits import limited_computation, validate_document
 
 
 class DocumentError(ValueError):
@@ -21,7 +22,9 @@ def _cell_text(cell) -> str:
     return " ".join(cell.text.split())
 
 
+@limited_computation
 def docx_to_markdown(data: bytes) -> str:
+    validate_document(data, "syllabus.docx")
     try:
         document = Document(io.BytesIO(data))
     except Exception as exc:
@@ -49,6 +52,7 @@ def docx_to_markdown(data: bytes) -> str:
     return "\n".join(lines)
 
 
+@limited_computation
 def pdf_to_markdown(data: bytes) -> str:
     import pdfplumber
 
@@ -58,6 +62,8 @@ def pdf_to_markdown(data: bytes) -> str:
         raise DocumentError(SCAN_MESSAGE) from exc
     lines: list[str] = []
     try:
+        if len(pdf.pages) > 100:
+            raise DocumentError("PDF 超过 100 页，请只保留课程大纲后导入。")
         for page_index, page in enumerate(pdf.pages, 1):
             tables = page.find_tables() or []
             boxes = [table.bbox for table in tables]

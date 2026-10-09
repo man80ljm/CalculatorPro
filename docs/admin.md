@@ -43,7 +43,7 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 | --- | --- | --- |
 | GET | `/admin/api/overview` | 教师数、课程数、本周活跃教师、今日/本周报告成功和失败、排队深度 |
 | GET | `/admin/api/users` | 用户名、注册时间、课程数、学期数、最近登录、最近报告 |
-| GET | `/admin/api/jobs` | 内存里的报告任务，以及数据库里的成功/失败记录 |
+| GET | `/admin/api/jobs` | 数据库里的报告任务与成功/失败记录，以及兼容的内存调试记录 |
 
 页面：`/admin/` 概览，`/admin/users`，`/admin/jobs`，`/admin/login`。静态文件在 `/admin/static/`。HTML 里用相对路径（`static/admin.css`、`api/overview`），子域反代和 `/admin` 前缀两种接法都能用。
 
@@ -51,9 +51,9 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 
 本周活跃教师：本周内新建过 `user_sessions`，或 `courses.updated_at`、`course_files.created_at` 落在本周的用户，按 `user_id` 去重。
 
-排队深度 = DeepSeek 池里还在等待的任务数（`queue_depth()`）+ 内存里 `stage=queued` 的报告数。同一次报告排队可能两边都会计入，页面上两个数会分开写。
+排队深度 = 数据库队列中等待的报告数 + DeepSeek 池中等待的大纲任务数；报告在两边等待时只计入一次。两个原始等待数也会分开显示。
 
-报告成功或失败时，worker 追加一行 `report_job_events`（`user_id`、`course_id`、`term_id`、`status`、`error`、`duration_ms`、`created_at`）。内存任务大约 30 分钟后清掉，这张表留下今日和本周的成败。进程启动时 `init_db()` → `create_all` 会补上这张新表，不改已有表。若启动被 v2 迁移提示拦住，先按 README 完成原来的迁移，再启动。
+报告成功或失败时，worker 在更新任务终态的同一事务中追加一行 `report_job_events`（`user_id`、`course_id`、`term_id`、`status`、`error`、`duration_ms`、`created_at`）。成功终态还和课程资料发布处于同一事务，避免重启后重复发布。内存只缓存较小的运行状态，完成后约 30 分钟清理；数据库记录保留，后台任务列表最近 100 条。进程启动时 `init_db()` → `create_all` 补上新增的队列表和会话表，不改已有表。若启动被 v2 迁移提示拦住，先按 README 完成原来的迁移，再启动。
 
 除登录和退出外，后台没有 POST / PUT / PATCH / DELETE。
 

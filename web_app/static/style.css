@@ -228,6 +228,8 @@ button[hidden] { display: none !important; }
 #sessionNotice { background: #fff3df; border-color: #e8bf77; }
 #sessionNotice p { margin: 0 0 8px; }
 #sessionNotice a { color: #075b48; font-weight: 700; }
+#reportResume { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+#reportResume[hidden] { display: none; }
 
 .mode-switch { display: flex; gap: 8px; }
 .mode-switch button[aria-pressed="true"] { background: var(--accent); color: white; }

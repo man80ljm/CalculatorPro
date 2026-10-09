@@ -10,10 +10,12 @@ from sqlalchemy import UniqueConstraint, DateTime, ForeignKey, Integer, String, 
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.exc import IntegrityError
 
 _engine: Engine | None = None
 _engine_url: str | None = None
 write_context: ContextVar[dict | None] = ContextVar("calculatorpro_write_context", default=None)
+job_engine: ContextVar[Engine | None] = ContextVar("calculatorpro_job_engine", default=None)
 
 
 class NotFound(LookupError):
@@ -49,6 +51,9 @@ def database_url() -> str:
 
 def get_engine() -> Engine:
     global _engine, _engine_url
+    fixed = job_engine.get()
+    if fixed is not None:
+        return fixed
     url = database_url()
     if _engine is not None and _engine_url == url:
         return _engine
@@ -105,6 +110,15 @@ def init_db() -> None:
     if needs_v2_migration(engine):
         raise RuntimeError(MIGRATION_HINT)
     Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        if db.get(JobQueueLock, 1) is None:
+            db.add(JobQueueLock(id=1))
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                if db.get(JobQueueLock, 1) is None:
+                    raise
 
 
 @contextmanager
@@ -124,6 +138,8 @@ def session_scope():
         db.commit()
     except Exception:
         db.rollback()
+        for path in db.info.get("new_blob_paths", []):
+            path.unlink(missing_ok=True)
         raise
     finally:
         db.close()
@@ -261,3 +277,27 @@ class ReportJobEvent(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class JobQueueLock(Base):
+    __tablename__ = "job_queue_lock"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class ReportTask(Base):
+    """输入放磁盘，状态放数据库；网页刷新和服务重启后仍可找回。"""
+    __tablename__ = "report_tasks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    term_id: Mapped[int] = mapped_column(ForeignKey("terms.id", ondelete="CASCADE"), index=True)
+    active_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True, default="queued")
+    settings_json: Mapped[str] = mapped_column(Text, default="{}")
+    meta_json: Mapped[str] = mapped_column(Text, default="{}")
+    public_json: Mapped[str] = mapped_column(Text, default="{}")
+    claim_token: Mapped[str] = mapped_column(String(64), default="")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archive_file_id: Mapped[int | None] = mapped_column(ForeignKey("course_files.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

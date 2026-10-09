@@ -320,10 +320,13 @@ def test_missing_key_is_explicit(client, monkeypatch):
 def test_second_term_keeps_its_own_files(client):
     course_id = client.post("/api/courses", json={"name": "学期课", "settings": _settings()}).json()["id"]
     first = client.get(f"/api/courses/{course_id}").json()
+    workbook = Workbook()
+    buffer = io.BytesIO()
+    workbook.save(buffer)
     uploaded = client.post(
         f"/api/courses/{course_id}/files",
         data={"kind": "grade"},
-        files={"file": ("grades.xlsx", b"PK\x03\x04grades", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        files={"file": ("grades.xlsx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
     assert uploaded.status_code == 200, uploaded.text
     created = client.post(f"/api/courses/{course_id}/terms", json={})

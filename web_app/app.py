@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import UploadFile
@@ -49,11 +49,11 @@ from web_app.terms import (
     merge_settings,
     term_public,
 )
-from web_app.limiter import ai_limiter, allow_login, register_limiter
+from web_app.limiter import ai_limiter, allow_login, register_limiter, operation_limiter
 from web_app.previous_attainment import store_last_achievement
 from web_app.relation_grid import absorb_relation_grid
 from web_app.report_jobs import launch_report_job, report_job_download, report_job_snapshot
-from web_app.service import ServiceError, ai_status, build_template, run_ai_report, run_calculation, run_export
+from web_app.service import ServiceError, ai_status, build_template, run_calculation, run_export
 from web_app.storage import (
     download_filename,
     ensure_upload_root,
@@ -189,8 +189,20 @@ class _Guard:
             await self.app(scope, receive, send)
             return
         path = scope.get("path") or "/"
+        raw_receive = receive
+        seen = 0
+        incoming_headers = dict(scope.get("headers") or [])
+        body_limit = 1024 * 1024 if b"application/json" in incoming_headers.get(b"content-type", b"") else max_request_bytes()
+        async def receive():
+            nonlocal seen
+            message = await raw_receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > body_limit:
+                    raise ServiceError("上传内容过大，请缩小文件后重试。", status=413)
+            return message
         length = _content_length(scope)
-        if length is not None and length > max_request_bytes():
+        if length is not None and length > body_limit:
             response = _json_error(413, f"上传内容不能超过 {max_upload_bytes() // (1024 * 1024)}MB")
             await response(scope, receive, send)
             return
@@ -208,6 +220,9 @@ class _Guard:
                 await response(scope, receive, send)
                 return
         if active and parsed:
+            if path.startswith("/api/") and scope.get("method") not in {"GET", "HEAD"} and not operation_limiter.allow(f"user:{parsed[0]}"):
+                await _json_error(429, "操作过于频繁，请稍等片刻。", code="rate_limited")(scope, receive, send)
+                return
             state = scope.setdefault("state", {})
             if isinstance(state, dict):
                 state["user_id"] = parsed[0]
@@ -220,14 +235,30 @@ class _Guard:
                     "course_id": int(match[1]) if match else None,
                     "revision": headers.get(b"x-course-revision", b"").decode("ascii", "ignore"),
                     "checked": False, "merge": bool(match and scope.get("method") == "PATCH" and path == f"/api/courses/{match[1]}")})
+            heavy = scope.get("method") == "POST" and bool(re.search(r"/(calculate|export|template|ai-report|report-jobs|grade-register|files|extract)$", path))
+            from web_app.resource_limits import admit_request, release_request
+            admitted = heavy and admit_request(parsed[0])
+            if heavy and not admitted:
+                response = _json_error(429, "正在处理其他任务，请稍等片刻，系统会自动再试。", code="server_busy")
+                response.headers["Retry-After"] = "3"
+                if token is not None:
+                    write_context.reset(token)
+                await response(scope, receive, send)
+                return
             try:
                 await self.app(scope, receive, send)
             finally:
+                if admitted:
+                    release_request(parsed[0])
                 if token is not None:
                     write_context.reset(token)
             return
         if path.startswith("/api/"):
-            replaced = bool(parsed and session_was_replaced(*parsed))
+            try:
+                replaced = bool(parsed and session_was_replaced(*parsed))
+            except SQLAlchemyError:
+                await _json_error(503, "数据库不可用")(scope, receive, send)
+                return
             response = _json_error(401, "账号已在别处登录，本页已停止保存。填写内容已保留。" if replaced else "未登录或登录已过期",
                                    code="session_replaced" if replaced else "session_expired")
         else:
@@ -296,6 +327,8 @@ async def _read_upload(upload: UploadFile | None, required: bool) -> bytes | Non
         raise ServiceError(f"上传文件不能超过 {limit // (1024 * 1024)}MB")
     if not data.startswith(b"PK"):
         raise ServiceError("文件不是有效的 xlsx")
+    from web_app.resource_limits import validate_document
+    validate_document(data, upload.filename)
     return data
 
 
@@ -323,7 +356,7 @@ def _as_upload(value) -> UploadFile | None:
 async def _json_body(request: Request) -> dict:
     raw = await request.body()
     if len(raw) > 1024 * 1024:
-        raise ServiceError("请求内容过大")
+        raise ServiceError("请求内容过大", status=413)
     if not raw.strip():
         return {}
     try:
@@ -454,11 +487,17 @@ def _job_settings(settings: dict, term) -> dict:
 
 def _persist_files(
     user_id: int, course_id: int, files: list[tuple[str, bytes]], kind: str, term_id: int | None = None,
-    *, excel: bytes | None = None, previous: bytes | None = None,
+    *, excel: bytes | None = None, previous: bytes | None = None, task_id=None, claim_token=None, summary=None,
 ) -> tuple[str, bytes] | None:
     if not files:
         return
     with session_scope() as db:
+        if task_id:
+            from web_app.db import ReportTask, ReportJobEvent, lock_user
+            lock_user(db, user_id)
+            task = db.scalar(select(ReportTask).where(ReportTask.id == task_id).with_for_update())
+            if task is None or task.status != "running" or task.claim_token != claim_token:
+                raise ServiceError("任务已由系统重新接续，本次处理已停止。", status=409)
         course = _owned_course(db, user_id, course_id)
         term = db.get(Term, int(term_id)) if term_id else current_term(db, course)
         if term is None or term.course_id != course.id or term.user_id != user_id:
@@ -470,11 +509,24 @@ def _persist_files(
         members = [(name, data) for name, data in files if not name.lower().endswith(".zip")]
         # 一份 ZIP 对应一次生成，同时快照本次实际使用的输入，之后重新导入不会改动旧包。
         filename = archive_filename(course.name, term.year_start, term.year_end, term.semester, term.school_year_term)
+        if task_id:
+            from web_app.download_names import settings_archive_filename
+            filename = settings_archive_filename(json.loads(task.meta_json).get("course_name") or course.name, json.loads(task.settings_json))
         content = make_archive(members, excel, previous)
         ids = [save_blob(db, user_id, course_id, name, data, kind, term_id=term.id).id for name, data in members]
         archive = save_blob(db, user_id, course_id, filename, content, kind, term_id=term.id)
         db.add(FileBatch(user_id=user_id, course_id=course_id, term_id=term.id, kind=kind,
                          archive_file_id=archive.id, file_ids_json=json.dumps(ids)))
+        if task_id:
+            from web_app.report_jobs import completed_public
+            task.archive_file_id = archive.id
+            task.status = "success"
+            task.active_key = None
+            task.lease_until = None
+            task.public_json = json.dumps(completed_public(json.loads(task.public_json), summary), ensure_ascii=False)
+            store_last_achievement(term, (summary or {}).get("achievement"))
+            db.add(ReportJobEvent(user_id=user_id, course_id=course_id, term_id=term.id, status="success",
+                duration_ms=int(max(0,(utcnow()-task.created_at).total_seconds())*1000)))
         return filename, content
 
 
@@ -492,7 +544,16 @@ def create_app() -> FastAPI:
     get_secret_key()
     ensure_upload_root()
     init_db()
-    application = FastAPI(title="CalculatorPro", docs_url=None, redoc_url=None, openapi_url=None)
+    from contextlib import asynccontextmanager
+    from web_app.report_jobs import start_job_runtime, stop_job_runtime
+    @asynccontextmanager
+    async def lifespan(_application):
+        start_job_runtime()
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(stop_job_runtime)
+    application = FastAPI(title="CalculatorPro", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @application.get("/healthz")
     def healthz():
@@ -523,7 +584,7 @@ def create_app() -> FastAPI:
         except AuthError as exc:
             return _json_error(exc.status, str(exc))
         except ServiceError as exc:
-            return _json_error(400, str(exc))
+            return _json_error(exc.status, str(exc))
         except SQLAlchemyError:
             return _json_error(503, "数据库不可用")
         return JSONResponse({"ok": True})
@@ -532,7 +593,9 @@ def create_app() -> FastAPI:
     async def login(request: Request):
         try:
             body = await _json_body(request)
-        except ServiceError:
+        except ServiceError as exc:
+            if exc.status == 413:
+                return _json_error(413, str(exc))
             body = {}
         username = str(body.get("username") or "")
         if not allow_login(_client_key(request), normalize_username(username, strict=False) or username):
@@ -755,7 +818,10 @@ def create_app() -> FastAPI:
         user_id, _session_id = _identity(request)
         with session_scope() as db:
             row = _owned_file(db, user_id, course_id, file_id)
-            data = read_blob(row)
+            from web_app.storage import resolve_stored
+            path = resolve_stored(row.user_id, row.course_id, row.stored_name)
+            if not path.is_file():
+                raise NotFound()
             filename = download_filename(row.original_name)
             if filename.lower().endswith(".zip") and row.kind in {"report", "output"}:
                 course = _owned_course(db, user_id, course_id)
@@ -763,7 +829,7 @@ def create_app() -> FastAPI:
                 if term is not None:
                     filename = archive_filename(course.name, term.year_start, term.year_end,
                                                 term.semester, term.school_year_term)
-        return _attachment(filename, data, _media_type(filename))
+        return FileResponse(path, filename=filename, media_type=_media_type(filename))
 
     application.get("/api/courses/{course_id}/files/{file_id}")(download_course_file)
 
@@ -882,19 +948,26 @@ def create_app() -> FastAPI:
     @_api
     async def ai_report(course_id: int, request: Request):
         user_id, _session_id = _identity(request)
-        if not ai_limiter.allow(_client_key(request)):
-            return _json_error(429, "AI 报告请求过于频繁，请稍后再试")
-        try:
-            settings, excel, previous = await _load_grade_job(request, user_id, course_id)
-            captured: list[tuple[str, bytes]] = []
-            filename, content = await asyncio.to_thread(run_ai_report, excel, previous, settings, captured)
-            filename, content = _persist_files(user_id, course_id, captured + [(filename, content)], "report",
-                                               term_id=settings["term_id"], excel=excel, previous=previous)
-        except (NotFound, ServiceError, ValueError, AuthError):
-            raise
-        except Exception as exc:
-            return _json_error(500, f"AI 报告生成失败：{exc}")
-        return _attachment(filename, content, "application/zip")
+        from web_app.deepseek_pool import configured
+        from web_app.service import AI_DISABLED_MESSAGE
+        if not configured():
+            raise ServiceError(AI_DISABLED_MESSAGE)
+        started = await start_report_job(course_id, request)
+        if started.status_code >= 400:
+            return started
+        job_id = json.loads(started.body)["job_id"]
+        deadline = asyncio.get_running_loop().time() + 240
+        while asyncio.get_running_loop().time() < deadline:
+            view = report_job_snapshot(user_id, job_id)
+            if view is None:
+                raise NotFound()
+            if view.get("error"):
+                raise ServiceError(view["error"])
+            if view.get("done"):
+                filename, path = report_job_download(user_id, job_id)
+                return FileResponse(path, filename=download_filename(filename), media_type="application/zip")
+            await asyncio.sleep(0.3)
+        raise ServiceError("报告仍在后台生成，请稍后到课程资料中下载。", status=503)
 
     application.post("/api/courses/{course_id}/ai-report")(ai_report)
 
@@ -908,10 +981,7 @@ def create_app() -> FastAPI:
             if term is None or term.course_id != course.id:
                 raise NotFound()
             term_id = term.id
-            meta = {"term_id": term.id, "term_label": term.label or "", "class_name": term.class_name or ""}
-
-        def persist(files: list[tuple[str, bytes]]):
-            return _persist_files(user_id, course_id, files, "report", term_id=term_id, excel=excel, previous=previous)
+            meta = {"term_id": term.id, "term_label": term.label or "", "class_name": term.class_name or "", "course_name": course.name}
 
         view = launch_report_job(
             user_id=user_id,
@@ -921,12 +991,24 @@ def create_app() -> FastAPI:
             previous=previous,
             settings=settings,
             meta=meta,
-            persist=persist,
+            persist=None,
             allow_ai=lambda: ai_limiter.allow(_client_key(request)),
         )
         return JSONResponse(view)
 
     application.post("/api/courses/{course_id}/report-jobs")(start_report_job)
+
+    @_api
+    async def latest_report_job(course_id: int, request: Request):
+        from web_app.report_jobs import current_report_job
+        user_id, _session_id = _identity(request)
+        with session_scope() as db:
+            course = _owned_course(db, user_id, course_id)
+            term = current_term(db, course)
+            term_id = term.id if term else None
+        return JSONResponse({"job": current_report_job(user_id, course_id, term_id) if term_id else None})
+
+    application.get("/api/courses/{course_id}/report-jobs/current")(latest_report_job)
 
     @_api
     async def read_report_job(job_id: str, request: Request):
@@ -942,6 +1024,8 @@ def create_app() -> FastAPI:
     async def download_report_job(job_id: str, request: Request):
         user_id, _session_id = _identity(request)
         filename, content = report_job_download(user_id, job_id)
+        if isinstance(content, Path):
+            return FileResponse(content, filename=download_filename(filename), media_type="application/zip")
         return _attachment(filename, content, "application/zip")
 
     application.get("/api/report-jobs/{job_id}/download")(download_report_job)

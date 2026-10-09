@@ -269,6 +269,8 @@ class Pool:
 
     def _try_reserve(self) -> Account | None:
         limit = _concurrency()
+        if sum(account.inflight for account in self.accounts) >= max(1, _env_int("DEEPSEEK_GLOBAL_CONCURRENCY", 5)):
+            return None
         available = [account for account in self.accounts if account.keys and account.inflight < limit]
         if not available:
             return None
@@ -462,11 +464,11 @@ def account_loads() -> dict[str, int]:
         return {account.name: account.inflight for account in pool.accounts}
 
 
-def queue_depth() -> int:
+def queue_depth(exclude_kind=None) -> int:
     """还在排队、尚未拿到槽位的任务数。不含已经在跑的。"""
     pool = get_pool()
     with pool.lock:
-        return sum(1 for waiter in pool.waiters if not waiter.cancelled)
+        return sum(1 for waiter in pool.waiters if not waiter.cancelled and waiter.kind != exclude_kind)
 
 
 def _all_keys() -> list[str]:

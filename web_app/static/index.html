@@ -106,6 +106,10 @@
 
       <button type="button" id="reportBtn">生成报告</button>
       <p class="hint" id="reportHint" aria-live="polite"></p>
+      <div id="reportResume" class="notice" hidden>
+        <span id="reportResumeText"></span>
+        <button type="button" class="secondary" id="reportResumeOpen">查看进度</button>
+      </div>
 
       <details class="fold" id="advancedSection">
         <summary id="advancedToggle">高级选项</summary>
@@ -424,7 +428,7 @@
       </form>
     </dialog>
   </main>
-  <footer class="note">AI 密钥只从服务器环境变量读取，页面不会询问，也不会保存。计算仍在当次请求的临时目录中进行，输入和结果会写入当前课程文件夹。</footer>
+  <footer class="note">课程和资料会保存在你的账号下。报告生成后，可以到课程资料中查看和下载。</footer>
   <script src="/static/relation_grid.js"></script>
   <script src="/static/app.js"></script>
 </body>

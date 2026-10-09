@@ -1,5 +1,6 @@
 """学期、大纲建课、成绩登记表导入。挂到现有应用上，旧接口仍走当前学期。"""
 from __future__ import annotations
+import asyncio
 
 import json
 import re
@@ -301,7 +302,7 @@ def attach(application) -> None:
     )
     from web_app.service import ServiceError
 
-    async def _bytes(upload, required: bool) -> bytes | None:
+    async def _bytes(upload, required: bool, validate=True) -> bytes | None:
         if upload is None:
             if required:
                 raise ServiceError("请选择文件")
@@ -312,6 +313,9 @@ def attach(application) -> None:
             raise ServiceError(f"上传文件不能超过 {limit // (1024 * 1024)}MB")
         if not data:
             raise ServiceError("文件是空的")
+        from web_app.resource_limits import validate_document
+        if validate:
+            validate_document(data, upload.filename or "")
         return data
 
     @_api
@@ -514,7 +518,7 @@ def attach(application) -> None:
             upload = _as_upload(form.get("register") or form.get("file"))
             if upload is None:
                 return body, None, None
-            data = await _bytes(upload, required=True)
+            data = await _bytes(upload, required=True, validate=False)
             return body, upload.filename or "register.xlsx", data
         finally:
             await _close_form(form)
@@ -526,6 +530,13 @@ def attach(application) -> None:
         settings, extra = settings_from_wizard(body)
         settings = absorb_relation_grid(settings, strict=True)
         from web_app.db import Course
+        parsed = None
+        grade_import_error = ""
+        if register_bytes:
+            try:
+                parsed = await asyncio.to_thread(parse_register, register_name or "register.xlsx", register_bytes)
+            except ServiceError as exc:
+                grade_import_error = str(exc)
 
         with session_scope() as db:
             from web_app.course_versions import reject_existing_course
@@ -542,11 +553,9 @@ def attach(application) -> None:
             from web_app.course_versions import freeze_existing_terms
             freeze_existing_terms(db, course)
             grade_import = None
-            grade_import_error = ""
             # 前端不再上传登记表。仍收到文件时走和主页一样的匹配/新建，不先占一条空学期。
-            if register_bytes:
+            if parsed:
                 try:
-                    parsed = parse_register(register_name or "register.xlsx", register_bytes)
                     grade_import = import_parsed_register(db, course, parsed, confirmed=False, user_id=user_id)
                 except ServiceError as exc:
                     grade_import_error = str(exc)
@@ -590,7 +599,7 @@ def attach(application) -> None:
                 raise ServiceError("请上传成绩登记表")
             upload = _as_upload(form.get("file") or form.get("register"))
             data = await _bytes(upload, required=True)
-            parsed = parse_register(upload.filename or "register.xlsx", data)
+            parsed = await asyncio.to_thread(parse_register, upload.filename or "register.xlsx", data)
             confirmed = str(request.query_params.get("confirm") or "") in {"1", "true", "yes"}
             if form.get("confirm") is not None and not hasattr(form.get("confirm"), "read"):
                 confirmed = confirmed or str(form.get("confirm")).strip().lower() in {"1", "true", "yes"}

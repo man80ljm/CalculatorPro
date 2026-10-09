@@ -9,6 +9,7 @@ from typing import Any
 from openpyxl import Workbook, load_workbook
 
 from web_app.service import ServiceError
+from web_app.resource_limits import limited_computation
 from web_app.syllabus.extract_text import DOC_MESSAGE, SCAN_MESSAGE, suffix_of
 
 _TERM = re.compile(r"(\d{4})\s*[-–—]\s*(\d{4})\s*学年\s*第\s*([12])\s*学期")
@@ -43,6 +44,8 @@ def _rows_from_xlsx(data: bytes) -> list[list[str]]:
     except Exception as exc:
         raise ServiceError("无法读取这份 xlsx 成绩登记表。") from exc
     sheet = workbook.active
+    if sheet.max_row > 5000 or sheet.max_column > 200:
+        raise ServiceError("表格超过 5000 行或 200 列，请删除多余空白行列后再导入。", status=413)
     rows = []
     for row in sheet.iter_rows(max_row=sheet.max_row, max_col=sheet.max_column, values_only=True):
         rows.append([_clean(cell) for cell in row])
@@ -57,6 +60,8 @@ def _rows_from_xls(data: bytes) -> list[list[str]]:
     except Exception as exc:
         raise ServiceError("无法读取这份 xls 成绩登记表。") from exc
     sheet = book.sheet_by_index(0)
+    if sheet.nrows > 5000 or sheet.ncols > 200:
+        raise ServiceError("表格超过 5000 行或 200 列，请删除多余空白行列后再导入。", status=413)
     rows = []
     for index in range(sheet.nrows):
         rows.append([_clean(sheet.cell_value(index, col)) for col in range(sheet.ncols)])
@@ -73,6 +78,8 @@ def _rows_and_prose_from_pdf(data: bytes) -> tuple[list[list[str]], str]:
     prose_parts: list[str] = []
     rows: list[list[str]] = []
     try:
+        if len(pdf.pages) > 100:
+            raise ServiceError("PDF 超过 100 页，请只保留成绩登记表后导入。", status=413)
         for page in pdf.pages:
             prose_parts.append(page.extract_text() or "")
             tables = page.extract_tables() or []
@@ -242,7 +249,10 @@ def _metadata(prose: str) -> dict[str, str]:
     return found
 
 
+@limited_computation
 def parse_register(filename: str, data: bytes) -> dict:
+    from web_app.resource_limits import validate_document
+    validate_document(data, filename)
     suffix = suffix_of(filename)
     if suffix == ".doc":
         raise ServiceError(DOC_MESSAGE)

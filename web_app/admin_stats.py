@@ -88,7 +88,7 @@ def build_overview() -> dict:
         "reports_week": week,
         "deepseek_queue": deepseek_waiting,
         "report_queued": report_queued,
-        "queue_depth": deepseek_waiting + report_queued,
+        "queue_depth": int(queue_depth(exclude_kind="report")) + report_queued,
     }
 
 

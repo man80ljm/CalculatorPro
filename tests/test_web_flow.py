@@ -7,7 +7,7 @@ from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -305,10 +305,13 @@ def test_user_isolation(app, tmp_path):
         created = alice.post("/api/courses", json={"name": "仅甲可见", "settings": _settings()})
         assert created.status_code == 200, created.text
         course_id = created.json()["id"]
+        safe_workbook = Workbook()
+        workbook_buffer = io.BytesIO()
+        safe_workbook.save(workbook_buffer)
         uploaded = alice.post(
             f"/api/courses/{course_id}/files",
             data={"kind": "grade"},
-            files={"file": ("../../etc/passwd.xlsx", b"PK\x03\x04secret", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            files={"file": ("../../etc/passwd.xlsx", workbook_buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
         )
         assert uploaded.status_code == 200, uploaded.text
         file_id = uploaded.json()["id"]

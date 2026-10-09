@@ -749,7 +749,14 @@ async function api(path, options) {
   if (write && match && Number(match[1]) === courseId) {
     options = { ...options, headers: { ...options.headers, "X-Course-Revision": courseRevision } };
   }
-  const response = await fetch(path, options);
+  let response;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    response = await fetch(path, options);
+    if (response.status !== 429 || response.headers.get("Retry-After") !== "3" || attempt === 3) break;
+    showResult("正在处理其他任务，稍等片刻，系统会自动再试…", false, true);
+    await delay(3000);
+    if (sessionStopped && write) throw new Error("未登录");
+  }
   if (response.status === 401) {
     const data = await response.clone().json().catch(() => ({}));
     retainDraft(true);
@@ -1154,6 +1161,8 @@ function renderTerms() {
 }
 
 function applyCoursePayload(data, useSnapshot = false) {
+  reportWatch += 1;
+  document.getElementById("reportResume").hidden = true;
   savePaused = true;
   clearTimeout(saveTimer);
   saveTimer = null;
@@ -1191,6 +1200,7 @@ function applyCoursePayload(data, useSnapshot = false) {
     savePaused = false;
   }
   afterCourseLoaded();
+  restoreReportJob();
 }
 
 async function openCourse(id) {
@@ -1546,6 +1556,8 @@ async function downloadReportJob(jobId) {
 
 async function watchReportJob(jobId) {
   const token = ++reportWatch;
+  const watchedCourse = courseId;
+  const watchedTerm = currentTermId;
   const dlg = document.getElementById("dlgReport");
   const stageNode = document.getElementById("reportStage");
   const bar = document.getElementById("reportProgress");
@@ -1566,17 +1578,22 @@ async function watchReportJob(jobId) {
     } catch (err) {
       if (err.message === "未登录") return;
       if (token !== reportWatch) return;
-      await delay(700);
+      await delay(3000);
       continue;
     }
     if (token !== reportWatch) return;
+    if (courseId !== watchedCourse || currentTermId !== watchedTerm) return;
+    const resume = document.getElementById("reportResume");
+    resume.hidden = false;
+    document.getElementById("reportResumeText").textContent = data.stage_label || "报告正在生成…";
+    document.getElementById("reportResumeOpen").onclick = () => openDialog("dlgReport");
+    if (!data.done) download.hidden = true;
     stageNode.textContent = data.stage_label || "正在生成报告…";
     bar.value = Number(data.percent) || 0;
     if (data.error) {
       errorNode.hidden = false;
       errorNode.textContent = formatReportError(data);
       download.hidden = true;
-      if (!dlg.open) openDialog("dlgReport");
       showResult(errorNode.textContent, true, true);
       return;
     }
@@ -1586,7 +1603,9 @@ async function watchReportJob(jobId) {
       errorNode.hidden = true;
       download.hidden = false;
       download.onclick = () => downloadReportJob(jobId);
-      if (!dlg.open) openDialog("dlgReport");
+      document.getElementById("reportResumeText").textContent = "报告已生成，可以下载。";
+      document.getElementById("reportResumeOpen").textContent = "下载报告";
+      document.getElementById("reportResumeOpen").onclick = () => downloadReportJob(jobId);
       await refreshFiles();
       if (data.summary) storeResult({ ...data.summary, reported: true });
       updateSummaries();
@@ -1597,8 +1616,31 @@ async function watchReportJob(jobId) {
       }
       return;
     }
-    await delay(700);
+    await delay(3000);
   }
+}
+
+async function restoreReportJob() {
+  const wanted = courseId;
+  const wantedTerm = currentTermId;
+  if (!wanted || !wantedTerm || sessionStopped) return;
+  try {
+    const response = await api(`/api/courses/${wanted}/report-jobs/current`);
+    if (!response.ok || wanted !== courseId || wantedTerm !== currentTermId) return;
+    const data = await response.json();
+    if (!data.job) return;
+    const button = document.getElementById("reportResumeOpen");
+    button.textContent = "查看进度";
+    if (data.job.done) {
+      document.getElementById("reportResume").hidden = false;
+      document.getElementById("reportResumeText").textContent = "上次报告已保存，可以直接下载。";
+      button.textContent = "下载报告";
+      button.onclick = () => downloadReportJob(data.job.job_id);
+    } else if (!data.job.error) {
+      // 刷新后只恢复进度，不弹窗打断填写。
+      watchReportJob(data.job.job_id);
+    }
+  } catch (err) { /* 连接恢复后再次打开课程即可找回。 */ }
 }
 
 async function generateReport() {

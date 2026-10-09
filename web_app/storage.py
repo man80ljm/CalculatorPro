@@ -5,13 +5,18 @@ import os
 import shutil
 import uuid
 from pathlib import Path
+from contextvars import ContextVar
 
 from web_app.db import CourseFile, NotFound
 
 ALLOWED_SUFFIXES = {".xlsx", ".docx", ".zip", ".json"}
+job_upload_root: ContextVar[Path | None] = ContextVar("calculatorpro_job_upload_root", default=None)
 
 
 def upload_root() -> Path:
+    fixed = job_upload_root.get()
+    if fixed is not None:
+        return fixed
     raw = os.environ.get("UPLOAD_DIR", "/data/uploads").strip() or "/data/uploads"
     return Path(raw).expanduser().resolve()
 
@@ -82,8 +87,18 @@ def download_filename(original_name: str) -> str:
 def save_blob(
     db, user_id: int, course_id: int, original_name: str, data: bytes, kind: str, term_id: int | None = None
 ) -> CourseFile:
+    from sqlalchemy import func, select
+    from web_app.resource_limits import setting
+    from web_app.service import ServiceError
+    used = int(db.scalar(select(func.coalesce(func.sum(CourseFile.size), 0)).where(CourseFile.user_id == int(user_id))) or 0)
+    quota = setting("USER_STORAGE_MB", 2048, maximum=102400) * 1024 * 1024
+    if used + len(data) > quota:
+        raise ServiceError("已保存资料较多，请联系管理员整理旧资料后再试。", status=413)
+    if shutil.disk_usage(upload_root()).free < len(data) + 200 * 1024 * 1024:
+        raise ServiceError("服务器存储空间不足，请联系管理员处理。", status=503)
     path, stored = allocate_path(user_id, course_id, original_name)
     path.write_bytes(data)
+    db.info.setdefault("new_blob_paths", []).append(path)
     row = CourseFile(
         user_id=int(user_id),
         course_id=int(course_id),
