@@ -45,6 +45,17 @@
         <footer class="dlg-foot"><button type="button" class="secondary" data-close>取消</button><button type="submit" id="createBlankCourse">创建课程</button></footer>
       </form>
     </dialog>
+    <dialog class="dlg" id="dlgDeleteCourse" aria-labelledby="dlgDeleteCourseTitle">
+      <div class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgDeleteCourseTitle">删除课程</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <p id="deleteCourseMessage"></p>
+          <p>这门课程的所有学期、成绩表、报告和其他资料都会删除，删除后无法在本程序中恢复。</p>
+          <p class="form-error" id="deleteCourseError" role="alert" hidden></p>
+        </div>
+        <footer class="dlg-foot"><button type="button" class="secondary" data-close>暂不删除</button><button type="button" class="danger" id="confirmDeleteCourse">删除课程及资料</button></footer>
+      </div>
+    </dialog>
     <section id="passwordPanel" hidden>
       <h2>修改密码</h2>
       <div class="fields">

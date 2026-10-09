@@ -53,6 +53,7 @@ function defaultState() {
 let state = defaultState();
 let courseId = null;
 let courseName = "";
+let deleteCourseTarget = null;
 let courseFiles = [];
 let terms = [];
 let currentTermId = null;
@@ -1391,26 +1392,52 @@ function bindOnce() {
       event.returnValue = "课程修改还没保存";
     }
   });
-  document.getElementById("deleteCourseBtn").addEventListener("click", async () => {
+  document.getElementById("deleteCourseBtn").addEventListener("click", () => {
     if (!courseId) return;
-    const name = courseName || "当前课程";
-    if (!window.confirm(`删除课程文件夹「${name}」及其文件？`)) return;
-    clearTimeout(saveTimer);
-    saveTimer = null;
-    const pending = saveDirty;
-    saveDirty = false;
-    const response = await api(`/api/courses/${courseId}`, { method: "DELETE" });
-    if (!response.ok) {
-      saveDirty = pending;
-      return showResult(await errorMessage(response), true);
+    deleteCourseTarget = { id: courseId, name: courseName };
+    document.getElementById("deleteCourseMessage").textContent = `确定删除“${courseName}”吗？`;
+    document.getElementById("deleteCourseError").hidden = true;
+    openDialog("dlgDeleteCourse");
+  });
+  document.getElementById("confirmDeleteCourse").addEventListener("click", async () => {
+    const target = deleteCourseTarget;
+    const dlg = document.getElementById("dlgDeleteCourse");
+    const button = document.getElementById("confirmDeleteCourse");
+    const error = document.getElementById("deleteCourseError");
+    if (!target || target.id !== courseId || button.disabled) return;
+    button.disabled = true;
+    dlg.dataset.busy = "1";
+    button.textContent = "正在删除…";
+    error.hidden = true;
+    try {
+      if (saveFlight) await saveFlight;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      const response = await api(`/api/courses/${target.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      saveDirty = false;
+      courseId = null;
+      courseName = "";
+      currentTermId = null;
+      courseFiles = [];
+      reportWatch += 1;
+      document.getElementById("reportResume").hidden = true;
+      localStorage.removeItem(COURSE_KEY);
+      sessionStorage.removeItem("calculatorpro.unsavedDraft");
+      state = defaultState();
+      state.grid = defaultRows();
+      dlg.dataset.busy = "0";
+      closeDialog(dlg, true);
+      deleteCourseTarget = null;
+      await loadCourses();
+      showResult(`“${target.name}”及其所有学期资料已删除。`, false);
+    } catch (err) {
+      if (err.message !== "未登录") { error.textContent = err.message || "删除失败，请重试。"; error.hidden = false; }
+    } finally {
+      button.disabled = false;
+      button.textContent = "删除课程及资料";
+      dlg.dataset.busy = "0";
     }
-    courseId = null;
-    localStorage.removeItem(COURSE_KEY);
-    state = defaultState();
-    state.grid = defaultRows();
-    renderAll();
-    await loadCourses();
-    showResult("课程文件夹已删除。", false);
   });
   document.getElementById("passwordBtn").addEventListener("click", () => {
     const panel = document.getElementById("passwordPanel");
@@ -1953,6 +1980,7 @@ function dialogDirty() {
 }
 
 function closeDialog(dlg, force) {
+  if (dlg.dataset.busy === "1") return false;
   if (sessionStopped) {
     retainDraft(true);
     dialogSnapshot = null;
