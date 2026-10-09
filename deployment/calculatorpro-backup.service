@@ -1,0 +1,12 @@
+[Unit]
+Description=CalculatorPro encrypted backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/calculatorpro-backup.env
+WorkingDirectory=/data/projects/calculatorpro
+ExecStart=/usr/bin/bash /data/projects/calculatorpro/scripts/nightly_backup.sh
+UMask=0077
+TimeoutStartSec=1800

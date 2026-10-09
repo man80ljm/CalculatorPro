@@ -1,0 +1,10 @@
+[Unit]
+Description=CalculatorPro daily backup at 02:30 Shanghai time
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
