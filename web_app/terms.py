@@ -25,7 +25,7 @@ TERM_BLOB_KEYS = (
 )
 
 # 不放进 TERM_BLOB_KEYS：那一组只在入参出现时才写入，缺了就会被整表丢掉。
-_KEPT_BLOB_KEYS = ("last_achievement", "previous_achievement", "syllabus_settings", "syllabus_version", "syllabus_version_id")
+_KEPT_BLOB_KEYS = ("last_achievement", "previous_achievement", "syllabus_settings", "syllabus_version", "syllabus_version_id", "legacy_report_dirty")
 
 
 def _as_dict(value: Any) -> dict:

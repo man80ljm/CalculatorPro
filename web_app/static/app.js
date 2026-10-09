@@ -68,6 +68,8 @@ let savePaused = false;
 const SAVE_DELAY = 800;
 const downloadedReportJobs = new Set();
 let reportWatch = 0;
+let reportState = null;
+let reportPending = false;
 let currentUserId = null;
 let sessionStopped = false;
 let courseRevision = "";
@@ -947,11 +949,16 @@ async function refreshFiles() {
     renderFiles();
     return;
   }
-  const response = await api(`/api/courses/${courseId}/files`);
+  const wanted = courseId;
+  const wantedTerm = currentTermId;
+  const response = await api(`/api/courses/${wanted}`);
   if (!response.ok) return;
   const data = await response.json();
+  if (wanted !== courseId || wantedTerm !== currentTermId || data.current_term_id !== wantedTerm) return;
   courseFiles = data.files || [];
+  reportState = data.report_state || null;
   renderFiles();
+  renderResultCard();
 }
 
 function setSaveStatus(state, text) {
@@ -1038,6 +1045,7 @@ async function flushSave() {
     const data = await response.json();
     const savedSettings = data.edit_settings || data.settings;
     courseName = data.name;
+    reportState = data.report_state || null;
     editBase = { name: data.name, settings: savedSettings, term_id: data.current_term_id };
     courseRevision = data.edit_revision || courseRevision;
     const current = collectSettings();
@@ -1165,6 +1173,8 @@ function renderTerms() {
 
 function applyCoursePayload(data, useSnapshot = false) {
   reportWatch += 1;
+  reportPending = false;
+  reportState = data.report_state || null;
   document.getElementById("reportResume").hidden = true;
   savePaused = true;
   clearTimeout(saveTimer);
@@ -1219,6 +1229,8 @@ async function loadCourses(preferId) {
   if (!courses.length) {
     courseId = null;
     courseName = "";
+    reportState = null;
+    reportPending = false;
     courseFiles = [];
     terms = [];
     currentTermId = null;
@@ -1418,6 +1430,8 @@ function bindOnce() {
       saveDirty = false;
       courseId = null;
       courseName = "";
+      reportState = null;
+      reportPending = false;
       currentTermId = null;
       courseFiles = [];
       reportWatch += 1;
@@ -1594,6 +1608,7 @@ async function downloadReportJob(jobId) {
 
 async function watchReportJob(jobId) {
   const token = ++reportWatch;
+  reportPending = true;
   const watchedCourse = courseId;
   const watchedTerm = currentTermId;
   const dlg = document.getElementById("dlgReport");
@@ -1606,10 +1621,12 @@ async function watchReportJob(jobId) {
     try {
       const response = await api(`/api/report-jobs/${jobId}`);
       if (!response.ok) {
+        reportPending = false;
         stageNode.textContent = "无法获取进度";
         errorNode.hidden = false;
         errorNode.textContent = await errorMessage(response);
         if (!dlg.open) openDialog("dlgReport");
+        if (reportState) renderResultCard();
         return;
       }
       data = await response.json();
@@ -1625,14 +1642,17 @@ async function watchReportJob(jobId) {
     resume.hidden = false;
     document.getElementById("reportResumeText").textContent = data.stage_label || "报告正在生成…";
     document.getElementById("reportResumeOpen").onclick = () => openDialog("dlgReport");
+    document.getElementById("reportResumeOpen").textContent = "查看进度";
     if (!data.done) download.hidden = true;
     stageNode.textContent = data.stage_label || "正在生成报告…";
     bar.value = Number(data.percent) || 0;
     if (data.error) {
+      reportPending = false;
       errorNode.hidden = false;
       errorNode.textContent = formatReportError(data);
       download.hidden = true;
       showResult(errorNode.textContent, true, true);
+      if (reportState) renderResultCard();
       return;
     }
     if (data.done) {
@@ -1645,9 +1665,11 @@ async function watchReportJob(jobId) {
       document.getElementById("reportResumeOpen").textContent = "下载报告";
       document.getElementById("reportResumeOpen").onclick = () => downloadReportJob(jobId);
       await refreshFiles();
+      if (token !== reportWatch || courseId !== watchedCourse || currentTermId !== watchedTerm) return;
+      reportPending = false;
       if (data.summary) storeResult({ ...data.summary, reported: true });
       updateSummaries();
-      showResult("报告已生成。", false);
+      showResult(reportState ? reportState.message : "报告已生成。", false);
       if (!downloadedReportJobs.has(jobId)) {
         downloadedReportJobs.add(jobId);
         await downloadReportJob(jobId);
@@ -1670,10 +1692,7 @@ async function restoreReportJob() {
     const button = document.getElementById("reportResumeOpen");
     button.textContent = "查看进度";
     if (data.job.done) {
-      document.getElementById("reportResume").hidden = false;
-      document.getElementById("reportResumeText").textContent = "上次报告已保存，可以直接下载。";
-      button.textContent = "下载报告";
-      button.onclick = () => downloadReportJob(data.job.job_id);
+      renderResultCard();
     } else if (!data.job.error) {
       // 刷新后只恢复进度，不弹窗打断填写。
       watchReportJob(data.job.job_id);
@@ -1781,6 +1800,11 @@ function storeResult(data) {
 
 function loadStoredResult() {
   if (!courseId || !currentTermId) return null;
+  if (reportState && reportState.status === "stale") return { stale: true };
+  if (reportState && reportState.summary) {
+    return { ...reportState.summary, reported: true, stale: false, at: reportState.created_at };
+  }
+  if (reportState) return null;
   localStorage.removeItem(RESULT_PREFIX + courseId);
   const data = readJson(resultStorageKey(currentTermId));
   if (!data || Number(data.term_id) !== Number(currentTermId)) return null;
@@ -1801,8 +1825,20 @@ function markCurrentResultStale() {
 
 function resultNote(data) {
   if (!courseId) return "请先新建或选择课程文件夹。";
+  if (reportState) return reportState.message;
   if (data && data.stale) return "成绩已更换，请重新计算";
   return "本学期尚未计算";
+}
+
+function renderReportState() {
+  if (reportPending) return;
+  const banner = document.getElementById("reportResume");
+  banner.hidden = !reportState;
+  if (!reportState) return;
+  document.getElementById("reportResumeText").textContent = reportState.message;
+  const button = document.getElementById("reportResumeOpen");
+  button.textContent = reportState.status === "stale" ? "下载旧报告" : "下载报告";
+  button.onclick = () => downloadSaved({ id: reportState.archive_file_id });
 }
 
 function clearStoredResults() {
@@ -1826,12 +1862,13 @@ function stat(label, value, strong) {
 
 /* 主界面的结果卡片：总达成度 + 关键数字，详情在弹窗里 */
 function renderResultCard() {
+  renderReportState();
   const card = document.getElementById("resultCard");
   card.innerHTML = "";
   const data = loadStoredResult();
   const filesBtn = el("button", { type: "button", class: "ghost small", text: "查看各学期资料" });
   filesBtn.addEventListener("click", () => openDialog("dlgFiles"));
-  card.dataset.state = !courseId ? "none" : data && data.stale ? "stale" : data ? "ready" : "empty";
+  card.dataset.state = !courseId ? "none" : data && data.stale ? "stale" : data || reportState ? "ready" : "empty";
   card.dataset.termId = currentTermId ? String(currentTermId) : "";
   if (!data || data.stale) {
     card.append(el("div", { class: "result-empty" }, [

@@ -47,6 +47,7 @@ class ReportJob:
         self.error = ""
         self.failed_stage = ""
         self.summary = None
+        self.source_signature = ""
         self.filename = ""
         self.content = b""
         self.stages: list[dict] = []
@@ -66,6 +67,7 @@ class ReportJob:
             "error": self.error,
             "failed_stage": self.failed_stage,
             "summary": self.summary,
+            "source_signature": self.source_signature,
             "stages": [dict(item) for item in self.stages],
             "queue_position": self.queue_position,
             "queue_eta_seconds": self.queue_eta_seconds,
@@ -343,6 +345,8 @@ def launch_report_job(
             if allow_ai is not None and not allow_ai():
                 raise ServiceError("AI 报告请求过于频繁，请稍后再试", status=429)
             job = ReportJob(user_id, course_id, term_id)
+            from web_app.report_state import submitted_signature
+            job.source_signature = submitted_signature(settings, excel, previous, meta.get("course_name") or "")
             _set_queued(job, max(1, len(active)), max(1, len(active)) * _estimate())
             folder = upload_root() / ".jobs" / job.id
             folder.mkdir(parents=True, exist_ok=False)
@@ -499,6 +503,7 @@ class JobRuntime:
             job.created_at = task.created_at.replace(tzinfo=timezone.utc).timestamp()
             # 恢复后进度不倒退；同一阶段仍可安全重新计算，AI 已完成的答案会复用。
             old = json.loads(task.public_json)
+            job.source_signature = old.get("source_signature") or ""
             job.percent = int(old.get("percent") or 0)
             job.stages = old.get("stages") or []
             with _LOCK:

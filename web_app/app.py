@@ -47,6 +47,7 @@ from web_app.terms import (
     file_count,
     list_terms,
     merge_settings,
+    parse_settings,
     term_public,
 )
 from web_app.limiter import ai_limiter, allow_login, register_limiter, operation_limiter
@@ -411,6 +412,7 @@ def _course_dict(db, course: Course) -> dict:
     db.flush()
     updated = course.updated_at.isoformat(timespec="microseconds") if course.updated_at else None
     term = current_term(db, course)
+    from web_app.report_state import course_report_state
     terms = []
     for item in list_terms(db, course.id):
         terms.append(term_public(item, file_count(db, item.id)))
@@ -426,6 +428,7 @@ def _course_dict(db, course: Course) -> dict:
         "files": [_file_dict(row) for row in _course_files(db, course.user_id, course.id, term.id)] if term is not None else [],
         "updated_at": updated,
         "edit_revision": updated,
+        "report_state": course_report_state(db, course, term),
     }
 
 
@@ -517,6 +520,10 @@ def _persist_files(
         archive = save_blob(db, user_id, course_id, filename, content, kind, term_id=term.id)
         db.add(FileBatch(user_id=user_id, course_id=course_id, term_id=term.id, kind=kind,
                          archive_file_id=archive.id, file_ids_json=json.dumps(ids)))
+        if kind == "report" and not task_id:
+            blob = parse_settings(term.settings_json)
+            blob.pop("legacy_report_dirty", None)
+            term.settings_json = json.dumps(blob, ensure_ascii=False)
         if task_id:
             from web_app.report_jobs import completed_public
             task.archive_file_id = archive.id
@@ -713,6 +720,11 @@ def create_app() -> FastAPI:
         body = await _json_body(request)
         with session_scope() as db:
             course = _owned_course(db, user_id, course_id)
+            from web_app.report_state import settings_signature, mark_legacy_changed
+            original_term = current_term(db, course)
+            before_settings = merge_settings(_settings_of(course), original_term) if original_term else _settings_of(course)
+            before_signature = settings_signature(before_settings)
+            before_name = course.name
             guard = write_context.get()
             if guard and guard.get("revision") != course.updated_at.isoformat(timespec="microseconds"):
                 latest = _course_dict(db, course)
@@ -744,6 +756,10 @@ def create_app() -> FastAPI:
                 if term is not None:
                     apply_term_fields(term, settings)
                 assign_course_settings(course, settings, term=term)
+            term = current_term(db, course)
+            after_settings = merge_settings(_settings_of(course), term) if term else _settings_of(course)
+            if before_name != course.name or before_signature != settings_signature(after_settings):
+                mark_legacy_changed(db, term)
             course.updated_at = utcnow()
             return JSONResponse(_course_dict(db, course))
 

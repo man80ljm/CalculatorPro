@@ -110,6 +110,10 @@ def save_blob(
     )
     db.add(row)
     db.flush()
+    if kind in {"grade", "previous"} and term_id:
+        from web_app.db import Term
+        from web_app.report_state import mark_legacy_changed
+        mark_legacy_changed(db, db.get(Term, int(term_id)))
     return row
 
 
