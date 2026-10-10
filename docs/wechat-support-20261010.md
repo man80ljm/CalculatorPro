@@ -12,4 +12,6 @@ web_app/static/support.json 改为 preview=false、wechat=/static/support/wechat
 
 本地独立服务使用合成账号和专用 SQLite，确认正式图片已加载（544 × 576）、保存链接指向原始 PNG 且文件名为“微信收款码.png”，示例和暂不能付款提示已移除。桌面及 390 × 844 手机视口显示完整，没有横向溢出。截图保存在 Git 忽略的 .local/coffee-support-20261010/wechat-desktop.jpg 和 wechat-mobile.jpg。
 
-实际微信扫码和付款须使用微信完成，尚未进行实际付款。线上验收另记发布记录。
+实际微信扫码和付款须使用微信完成，尚未进行实际付款。e6de1ce 已上线，见[发布记录](wechat-support-deploy-20261010.md)。
+
+以后从 Git 全新构建时须另行提供独立保存的 wechat.png，保持原图完整。当前服务器发布目录保留原文件，迁移或重建时一并带上；不要强制加入 Git。没有图片时入口会自动隐藏，不影响课程和报告。
