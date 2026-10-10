@@ -36,6 +36,9 @@ outputs/
 .local/
 backups/
 
+# User-provided payment image: publish to the website separately, not public Git history.
+web_app/static/support/wechat.*
+
 **/计算规则.docx
 **/课程目标达成情况评价表.docx
 "κ���ϱ�����ʽ�����о�-1.pdf" 
