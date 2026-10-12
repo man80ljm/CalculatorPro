@@ -1,7 +1,10 @@
-"""只读运维后台。页面和查询都是 GET，写操作只有登录和退出。"""
+"""运维统计与邀请码管理；邀请码写入沿用独立管理员权限。"""
 from __future__ import annotations
 
+import asyncio
 import json
+import secrets
+from urllib.parse import urlsplit
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -20,8 +23,10 @@ from web_app.admin_auth import (
     set_admin_cookie,
     start_admin_session,
     normalize_host,
+    invitation_csrf_token,
 )
 from web_app.admin_stats import build_jobs, build_overview, build_users
+from web_app.invitations import InvitationError, create_admin_invitation, list_invitations, update_invitation, delete_invitation
 
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "admin"
 _STATIC_FILES = {
@@ -69,6 +74,29 @@ def _require_admin(request: Request) -> JSONResponse | None:
         return _json_error(503, "未配置管理员密码")
     if read_admin_session(request.cookies.get(ADMIN_COOKIE)) is None:
         return _json_error(401, "未登录或登录已过期")
+    return None
+
+
+def _require_invite_write(request: Request) -> JSONResponse | None:
+    denied = _require_admin(request)
+    if denied is not None:
+        return denied
+    origin = request.headers.get("origin")
+    if origin:
+        try:
+            parsed = urlsplit(origin)
+        except ValueError:
+            return _json_error(403, "请求来源不允许")
+        if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != request.headers.get("host", "").lower():
+            return _json_error(403, "请求来源不允许")
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        return _json_error(403, "请求来源不允许")
+    expected = invitation_csrf_token(request.cookies.get(ADMIN_COOKIE, ""))
+    provided = request.headers.get("x-admin-csrf", "")
+    if not secrets.compare_digest(expected.encode(), provided.encode()):
+        return _json_error(403, "页面已失效，请刷新后台后重试")
+    if request.method != "DELETE" and request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+        return _json_error(400, "请使用 JSON 请求")
     return None
 
 
@@ -184,6 +212,65 @@ def attach_admin(application: FastAPI) -> None:
         except SQLAlchemyError:
             return _json_error(503, "数据库不可用")
         return _no_store(JSONResponse(payload))
+
+    @application.get("/admin/api/invites")
+    def admin_invites(request: Request):
+        denied = _require_admin(request)
+        if denied is not None:
+            return denied
+        try:
+            payload = {"invites": list_invitations(),
+                       "csrf_token": invitation_csrf_token(request.cookies.get(ADMIN_COOKIE, ""))}
+        except SQLAlchemyError:
+            return _json_error(503, "数据库不可用")
+        return _no_store(JSONResponse(payload))
+
+    @application.post("/admin/api/invites")
+    async def admin_create_invite(request: Request):
+        denied = _require_invite_write(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await _json_body(request)
+            if set(body) - {"max_uses"}:
+                raise InvitationError("只可设置可注册总次数")
+            invitation = await asyncio.to_thread(create_admin_invitation, body.get("max_uses", 5))
+            return _no_store(JSONResponse({"invitation": invitation}, status_code=201))
+        except (InvitationError, ValueError) as exc:
+            return _json_error(getattr(exc, "status", 400), str(exc))
+        except SQLAlchemyError:
+            return _json_error(503, "数据库不可用")
+
+    @application.patch("/admin/api/invites/{invitation_id}")
+    async def admin_update_invite(invitation_id: int, request: Request):
+        denied = _require_invite_write(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await _json_body(request)
+            invitation = await asyncio.to_thread(update_invitation, invitation_id, body)
+            return _no_store(JSONResponse({"invitation": invitation}))
+        except (InvitationError, ValueError) as exc:
+            return _json_error(getattr(exc, "status", 400), str(exc))
+        except SQLAlchemyError:
+            return _json_error(503, "数据库不可用")
+
+    @application.delete("/admin/api/invites/{invitation_id}")
+    async def admin_delete_invite(invitation_id: int, request: Request):
+        denied = _require_invite_write(request)
+        if denied is not None:
+            return denied
+        try:
+            await asyncio.to_thread(delete_invitation, invitation_id)
+            return _no_store(JSONResponse({"ok": True}))
+        except InvitationError as exc:
+            return _json_error(exc.status, str(exc))
+        except SQLAlchemyError:
+            return _json_error(503, "数据库不可用")
+
+    @application.get("/admin/invites")
+    def admin_invites_page(request: Request):
+        return _page(request, "invites.html")
 
     @application.get("/admin/static/{name}")
     def admin_static(name: str):

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>邀请码 · 运维后台</title>
+  <link rel="stylesheet" href="static/admin.css">
+</head>
+<body data-page="invites">
+  <div class="shell">
+    <aside>
+      <p class="kicker">CalculatorPro</p>
+      <strong>运维后台</strong>
+      <nav>
+        <a href="./">概览</a>
+        <a href="users">用户</a>
+        <a href="jobs">任务</a>
+        <a href="invites" aria-current="page">邀请码</a>
+      </nav>
+      <button type="button" id="logout" class="ghost">退出</button>
+    </aside>
+    <main>
+      <div class="page-head">
+        <h1>邀请码</h1>
+        <div class="actions"><button type="button" id="refresh" class="ghost">刷新</button><button type="button" id="new-invite">新增邀请码</button></div>
+      </div>
+      <p class="note">用户填写有效邀请码才能注册，成功后自动获得专属码。你可以调整每个码的可注册总次数；注册失败不计次。</p>
+      <p id="error" class="banner" role="alert" hidden></p>
+      <p id="notice" class="note" role="status" hidden></p>
+      <section id="invites" aria-live="polite"></section>
+    </main>
+  </div>
+  <dialog id="invite-dialog" aria-labelledby="invite-dialog-title">
+    <form id="invite-form">
+      <h2 id="invite-dialog-title">新增邀请码</h2>
+      <p id="invite-owner" class="note"></p>
+      <label for="max-uses">可注册总次数</label>
+      <input type="number" id="max-uses" name="max_uses" min="0" max="1000000" step="1" value="5" required>
+      <label class="checkbox"><input type="checkbox" id="unlimited">不限次数</label>
+      <p id="limit-hint" class="note">6 位邀请码自动生成。新用户的专属码默认可注册 5 人。</p>
+      <p id="invite-error" class="error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="ghost" data-close>取消</button><button type="submit" id="save-invite">生成邀请码</button></div>
+    </form>
+  </dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-title">
+    <h2 id="delete-title">删除邀请码</h2>
+    <p id="delete-message"></p>
+    <p class="note">删除后这个码无法继续注册。已注册账号和邀请记录会保留。</p>
+    <p id="delete-error" class="error" role="alert"></p>
+    <div class="dialog-actions"><button type="button" class="ghost" data-close>取消</button><button type="button" class="danger" id="confirm-delete">删除邀请码</button></div>
+  </dialog>
+  <script src="static/admin.js"></script>
+</body>
+</html>

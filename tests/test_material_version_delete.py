@@ -79,7 +79,7 @@ def test_history_delete_is_private_and_cannot_target_another_course(client, app)
     other_cid = _course(client, _settings(), name="另一门合成课程")
     assert _delete(client, other_cid, old).status_code == 404
     with TestClient(app) as stranger:
-        stranger.post("/api/register", json={"username": "other-user", "password": PASSWORD})
+        stranger.post("/api/register", json={"invite_code": "TST123", "username": "other-user", "password": PASSWORD})
         stranger.post("/api/login", json={"username": "other-user", "password": PASSWORD})
         assert _delete(stranger, cid, old).status_code == 404
     assert _catalog(client, cid)["terms"][0]["versions"] == [latest, old]

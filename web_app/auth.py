@@ -10,7 +10,9 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from web_app.db import User, UserSession, SessionHead, lock_user, session_expiry, session_scope, utcnow
+from web_app.db import InvitationRegistration, User, UserSession, SessionHead, lock_user, session_expiry, session_scope, utcnow
+
+from web_app.invitations import claim_invitation, default_user_limit, new_invitation, normalize_code, public_invitation
 
 COOKIE_NAME = "cp_session"
 SESSION_MAX_AGE = 12 * 60 * 60
@@ -79,17 +81,28 @@ def _dummy() -> str:
     return _dummy_hash
 
 
-def register_user(username: str, password: str) -> tuple[int, str]:
+def register_user(username: str, password: str, invite_code) -> tuple[int, str, dict]:
     name = normalize_username(username, strict=True)
     validate_new_password(password)
+    code = normalize_code(invite_code)
     user = User(username=name, password_hash=hash_password(password))
     try:
         with session_scope() as db:
+            invitation = claim_invitation(db, code)
+            owner = db.get(User, invitation.owner_user_id) if invitation.owner_user_id is not None else None
             db.add(user)
             db.flush()
-            return user.id, user.username
+            personal = new_invitation(db, max_uses=default_user_limit(), owner_user_id=user.id)
+            db.add(InvitationRegistration(user_id=user.id, invitation_id=invitation.id,
+                invited_by=owner.username if owner else "管理员", inviter_user_id=invitation.owner_user_id))
+            db.flush()
+            return user.id, user.username, public_invitation(personal, user.username)
     except IntegrityError as exc:
-        raise AuthError("用户名已存在", status=409) from exc
+        with session_scope() as db:
+            exists = db.scalar(select(User.id).where(User.username == name))
+        if exists is not None:
+            raise AuthError("用户名已存在", status=409) from exc
+        raise
 
 
 def authenticate(username: str, password: str) -> tuple[int, str] | None:

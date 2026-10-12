@@ -1044,7 +1044,7 @@ function scheduleSave() {
 
 function editTarget(node) {
   if (!node || !node.closest) return false;
-  if (node.closest("#passwordPanel, #dlgWizard, #dlgConfirm, #dlgReport, #dlgRegister, #dlgImportTerm, #dlgNewCourse")) return false;
+  if (node.closest("#passwordPanel, #invitePanel, #dlgWizard, #dlgConfirm, #dlgReport, #dlgRegister, #dlgImportTerm, #dlgNewCourse")) return false;
   if (node.id === "courseSelect" || node.id === "termSelect" || node.id === "saveStatus") return false;
   if ((node.type || "") === "file") return false;
   return Boolean(node.closest("main"));
@@ -1516,6 +1516,26 @@ function bindOnce() {
       dlg.dataset.busy = "0";
     }
   });
+  document.getElementById("inviteBtn").addEventListener("click", async () => {
+    const panel = document.getElementById("invitePanel");
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+      document.getElementById("inviteMsg").textContent = "";
+      await loadMe();
+    }
+  });
+  document.getElementById("copyInviteBtn").addEventListener("click", async () => {
+    const input = document.getElementById("personalInviteCode");
+    const message = document.getElementById("inviteMsg");
+    try {
+      await navigator.clipboard.writeText(input.value);
+      message.textContent = "邀请码已复制。";
+    } catch (err) {
+      input.focus();
+      input.select();
+      message.textContent = "请复制已选中的邀请码。";
+    }
+  });
   document.getElementById("passwordBtn").addEventListener("click", () => {
     const panel = document.getElementById("passwordPanel");
     panel.hidden = !panel.hidden;
@@ -1565,10 +1585,20 @@ async function loadAiStatus() {
 async function loadMe() {
   try {
     const response = await api("/api/me");
-    if (!response.ok) return;
+    if (!response.ok) {
+      document.getElementById("inviteMsg").textContent = await errorMessage(response);
+      return;
+    }
     const data = await response.json();
     document.getElementById("who").textContent = data.username || "";
     currentUserId = data.id;
+    const invitation = data.invitation;
+    const labels = { active: "可使用", exhausted: "次数已用完", disabled: "已停用", deleted: "已删除" };
+    document.getElementById("personalInviteCode").value = invitation ? invitation.code : "";
+    document.getElementById("copyInviteBtn").disabled = !invitation || invitation.status !== "active";
+    document.getElementById("personalInviteStatus").textContent = invitation
+      ? `${labels[invitation.status] || "暂不可用"} · 已注册 ${invitation.used_count} 人 · ${invitation.remaining === null ? "不限次数" : `还可注册 ${invitation.remaining} 人`}`
+      : "暂时无法获取邀请码，请稍后重试。";
   } catch (err) {
     /* 未登录时 api() 会跳转 */
   }

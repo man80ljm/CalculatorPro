@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import UniqueConstraint, DateTime, ForeignKey, Integer, String, Text, create_engine, event, text
+from sqlalchemy import CheckConstraint, UniqueConstraint, DateTime, ForeignKey, Integer, String, Text, create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
@@ -301,3 +301,31 @@ class ReportTask(Base):
     archive_file_id: Mapped[int | None] = mapped_column(ForeignKey("course_files.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+class InvitationCode(Base):
+    """注册邀请码；删除保留码值和历史，避免重新派发。"""
+    __tablename__ = "invitation_codes"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_invitation_code"),
+        UniqueConstraint("owner_user_id", name="uq_invitation_owner"),
+        CheckConstraint("used_count >= 0", name="ck_invitation_used"),
+        CheckConstraint("max_uses IS NULL OR max_uses >= used_count", name="ck_invitation_limit"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(6))
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class InvitationRegistration(Base):
+    """注册准入与邀请来源，和账号/扣次在同一事务保存。"""
+    __tablename__ = "invitation_registrations"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    invitation_id: Mapped[int] = mapped_column(ForeignKey("invitation_codes.id"), index=True)
+    invited_by: Mapped[str] = mapped_column(String(128))
+    inviter_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

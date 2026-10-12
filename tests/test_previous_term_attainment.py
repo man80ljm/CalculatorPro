@@ -49,7 +49,7 @@ def client(tmp_path, monkeypatch):
     from web_app.app import create_app
 
     with TestClient(create_app()) as test_client:
-        assert test_client.post("/api/register", json={"username": "teacher", "password": PASSWORD}).status_code == 200
+        assert test_client.post("/api/register", json={"invite_code": "TST123", "username": "teacher", "password": PASSWORD}).status_code == 200
         assert test_client.post("/api/login", json={"username": "teacher", "password": PASSWORD}).status_code == 200
         yield test_client
 

@@ -33,7 +33,7 @@ def app(tmp_path, monkeypatch):
 @pytest.fixture
 def client(app):
     with TestClient(app) as test_client:
-        created = test_client.post("/api/register", json={"username": "teacher", "password": PASSWORD})
+        created = test_client.post("/api/register", json={"invite_code": "TST123", "username": "teacher", "password": PASSWORD})
         assert created.status_code == 200, created.text
         logged = test_client.post("/api/login", json={"username": "teacher", "password": PASSWORD})
         assert logged.status_code == 200, logged.text
@@ -138,7 +138,7 @@ def test_report_job_stage_order_zip_privacy_and_single_flight(client, app, monke
         assert again.json()["job_id"] == job_id
 
         with TestClient(app) as other:
-            assert other.post("/api/register", json={"username": "other-teacher", "password": PASSWORD}).status_code == 200
+            assert other.post("/api/register", json={"invite_code": "TST123", "username": "other-teacher", "password": PASSWORD}).status_code == 200
             assert other.post("/api/login", json={"username": "other-teacher", "password": PASSWORD}).status_code == 200
             assert other.get(f"/api/report-jobs/{job_id}").status_code == 404
             assert other.get(f"/api/report-jobs/{job_id}/download").status_code == 404

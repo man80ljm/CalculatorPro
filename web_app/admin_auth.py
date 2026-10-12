@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import secrets
 
@@ -147,3 +148,9 @@ def clear_admin_cookie(response) -> None:
         samesite="lax",
         secure=cookie_secure(),
     )
+
+
+def invitation_csrf_token(session_token: str) -> str:
+    """写入令牌绑定当前运维会话，不能用教师 Cookie 替代。"""
+    return hmac.new(get_secret_key().encode("utf-8"),
+                    ("admin-invitation-write:" + session_token).encode("utf-8"), hashlib.sha256).hexdigest()

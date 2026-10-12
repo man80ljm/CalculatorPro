@@ -60,3 +60,23 @@ def _browser_revision_headers(monkeypatch):
         return original(client, method, url, **kwargs)
 
     monkeypatch.setattr(TestClient, "request", request)
+
+
+@pytest.fixture(autouse=True)
+def _explicit_test_invitation(monkeypatch):
+    """Only explicit TST123 payloads receive this isolated fixture code; never inject or bypass validation."""
+    from urllib.parse import urlsplit
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+    from web_app.db import InvitationCode, session_scope
+    original = TestClient.request
+
+    def request(client, method, url, **kwargs):
+        payload = kwargs.get("json")
+        if method.upper() == "POST" and urlsplit(str(url)).path == "/api/register" and isinstance(payload, dict) and payload.get("invite_code") == "TST123":
+            with session_scope() as db:
+                if db.scalar(select(InvitationCode.id).where(InvitationCode.code == "TST123")) is None:
+                    db.add(InvitationCode(code="TST123", max_uses=None, used_count=0, enabled=1))
+        return original(client, method, url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request)

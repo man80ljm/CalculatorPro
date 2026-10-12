@@ -52,7 +52,7 @@ def test_same_code_with_changed_name_prompts_for_existing_course(client):
 
 def test_duplicate_detection_only_checks_current_user(client):
     first = client.post("/api/courses/from-syllabus", json=new_syllabus()).json()
-    assert client.post("/api/register", json={"username": "other", "password": PASSWORD}).status_code == 200
+    assert client.post("/api/register", json={"invite_code": "TST123", "username": "other", "password": PASSWORD}).status_code == 200
     assert client.post("/api/login", json={"username": "other", "password": PASSWORD}).status_code == 200
     second = client.post("/api/courses/from-syllabus", json=new_syllabus())
     assert second.status_code == 200, second.text

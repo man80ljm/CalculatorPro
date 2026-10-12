@@ -1,6 +1,6 @@
-# 只读运维后台
+# 运维后台与邀请码管理
 
-后台给运维看教师数、课程数、报告成败和排队情况。不能改密码、删课、代登录、改设置或重新生成报告。
+后台提供教师数、课程数、报告成败和排队情况统计，以及邀请码新增、次数调整、启停和删除。课程和报告功能保持只读，不能改密码、删课、代登录、改设置或重新生成报告。
 
 页面在本服务的 `/admin`。`/admin` 会转到 `/admin/`。目标子域是 `admin.calc.geekhuang.com`，由 nginx 反代到这个前缀，或按 Host 分流。
 
@@ -13,6 +13,7 @@
 | `ADMIN_USERNAME` | 登录名，默认 `admin`。大小写不敏感。 |
 | `ADMIN_HOST` | 可选。例如 `admin.calc.geekhuang.com`。设置后，Host 匹配时根路径也进后台；路径以 `/admin` 开头时，其他 Host 也能打开（方便本机）。未设置时只认 `/admin`。 |
 | `COOKIE_SECURE` | `true` 时运维 Cookie 带 Secure，和教师 Cookie 一样。只在 HTTPS 后面打开。 |
+| `INVITE_USER_DEFAULT_USES` | 新生成的用户专属码可注册总人数，默认 `5`，范围 `0` 到 `1000000`，或 `unlimited`。管理员可逐码调整，修改默认值不会改变已有码。 |
 | `SECRET_KEY` | 给运维 Cookie 签名。盐是 `cp-admin-session-v1`，和教师 `cp_session` 的盐 `cp-session-v2` 不同。 |
 
 两个密码变量都空着时，登录和数据接口返回 **503**，`detail` 为「未配置管理员密码」。页面只显示配置提示，不会放行。
@@ -31,7 +32,7 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 - 成功后发 HttpOnly Cookie `cp_admin_session`，`SameSite=Lax`，`Path=/`，有效期 12 小时。
 - `POST /admin/api/logout` 清除这枚 Cookie。
 - 教师 `cp_session` 不能访问 `/admin/api/*`。运维 Cookie 也不能当教师登录用。
-- 后台不查 `users` 表。教师的用户名和密码即使碰巧相同也不能进后台，除非你把同一口令配进了上面的环境变量。
+- 管理员认证不查 `users` 表。教师的用户名和密码即使碰巧相同也不能进后台，除非你把同一口令配进了上面的环境变量。
 
 `Path=/` 是为了子域反代：浏览器上的路径是 `/api/overview`，不是 `/admin/api/overview`。Cookie 若限定在 `/admin`，这种反代就带不上。教师站看到这枚 Cookie 会忽略。
 
@@ -42,10 +43,10 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 | 方法 | 路径 | 内容 |
 | --- | --- | --- |
 | GET | `/admin/api/overview` | 教师数、课程数、本周活跃教师、今日/本周报告成功和失败、排队深度 |
-| GET | `/admin/api/users` | 用户名、注册时间、课程数、学期数、最近登录、最近报告 |
+| GET | `/admin/api/users` | 用户名、专属邀请码、邀请来源、注册时间、课程数、学期数、最近登录、最近报告 |
 | GET | `/admin/api/jobs` | 数据库里的报告任务与成功/失败记录，以及兼容的内存调试记录 |
 
-页面：`/admin/` 概览，`/admin/users`，`/admin/jobs`，`/admin/login`。静态文件在 `/admin/static/`。HTML 里用相对路径（`static/admin.css`、`api/overview`），子域反代和 `/admin` 前缀两种接法都能用。
+页面：`/admin/` 概览，`/admin/users`，`/admin/jobs`，`/admin/invites` 邀请码管理，`/admin/login`。静态文件在 `/admin/static/`。HTML 里用相对路径（`static/admin.css`、`api/overview`），子域反代和 `/admin` 前缀两种接法都能用。
 
 今日、本周按北京时间（UTC+8），周一 0 点起算。库里的时间仍是 UTC。
 
@@ -55,7 +56,26 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 
 报告成功或失败时，worker 在更新任务终态的同一事务中追加一行 `report_job_events`（`user_id`、`course_id`、`term_id`、`status`、`error`、`duration_ms`、`created_at`）。成功终态还和课程资料发布处于同一事务，避免重启后重复发布。内存只缓存较小的运行状态，完成后约 30 分钟清理；数据库记录保留，后台任务列表最近 100 条。进程启动时 `init_db()` → `create_all` 补上新增的队列表和会话表，不改已有表。若启动被 v2 迁移提示拦住，先按 README 完成原来的迁移，再启动。
 
-除登录和退出外，后台没有 POST / PUT / PATCH / DELETE。
+## 邀请码与正式注册
+
+正式注册 `POST /api/register` 的 JSON 必须含 `username`、`password` 和 `invite_code`。邀请码是服务端用 `secrets` 生成的 6 位大写字母与数字混合码；输入时忽略大小写和首尾空白。无效、停用、删除或次数已满的码均不能注册，旧的无邀请码页面也不能绕过服务端校验。
+
+注册成功会消耗邀请来源码的一次额度，生成该用户自己的专属码，并保存邀请关系。以上与账号创建在同一数据库事务中完成，重复用户名、密码不合要求或生成失败不会扣次。PostgreSQL 使用行锁，SQLite 使用写锁，多个请求争抢最后一个名额不会超发。注册响应和已登录的 `GET /api/me` 包含个人码、使用次数和状态；用户可从「我的邀请码」复制。
+
+| 方法 | 路径 | 请求 / 返回 |
+| --- | --- | --- |
+| GET | `/admin/api/invites` | 未删除的邀请码列表和 `csrf_token` |
+| POST | `/admin/api/invites` | `{"max_uses": 5}`，创建管理员码，返回 201；省略时为 5 |
+| PATCH | `/admin/api/invites/{id}` | `{"max_uses": 5}` 或 `{"enabled": false}`，可同时修改 |
+| DELETE | `/admin/api/invites/{id}` | 删除邀请码，已注册账号和邀请记录保留 |
+
+上述写接口均要求独立的管理员 Cookie，并在 `X-Admin-CSRF` 头中携带列表接口返回的、与当前会话绑定的令牌。POST/PATCH 只接受 JSON，拒绝跨来源写请求。教师 Cookie 无管理权限。除这组邀请码接口及登录/退出外，后台没有写接口。
+
+`max_uses` 表示**可注册总次数**，不是额外次数。例如已用 2 次、总次数 5 次，剩余 3 次；总次数不能降到 2 以下。`0` 表示没有可用名额，`null` 表示不限次数。停用不会抹掉已用次数，重新启用时仍受额度限制。删除后码不可恢复、不可重复生成，个人码被删除后也不会自行补发。
+
+启动时 `init_db()` 会新建 `invitation_codes`、`invitation_registrations` 两张表，不修改现有用户表。已有账号继续使用原密码登录，并在首次加载个人信息时补发一个专属邀请码。历史账号标为「历史账号」，不会伪造之前不存在的邀请关系。数据库不预置任何公开邀请码；上线后管理员先创建首批码，再向用户发放。原型的浏览器本地邀请码不会导入正式数据库。
+
+发布前备份数据库和上传文件，保留旧镜像与代码，设置独立管理员密码，按现有部署流程重启应用。随后检查管理员创建码 → 注册 → 个人码邀请下一人 → 原码额度已满被拒绝；原有账号登录及课程数据也应核对。此文档描述已实现的代码，不代表已发布到线上。
 
 ## nginx
 

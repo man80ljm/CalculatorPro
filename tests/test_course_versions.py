@@ -113,6 +113,6 @@ def test_stale_version_and_wrong_owner_are_rejected(client):
     assert stale.status_code == 409
     assert stale.json()["code"] == "stale_version"
     from tests.test_web_flow import PASSWORD
-    assert client.post("/api/register", json={"username": "other", "password": PASSWORD}).status_code == 200
+    assert client.post("/api/register", json={"invite_code": "TST123", "username": "other", "password": PASSWORD}).status_code == 200
     assert client.post("/api/login", json={"username": "other", "password": PASSWORD}).status_code == 200
     assert client.post(f"/api/courses/{course_id}/syllabus-version", json=new_syllabus()).status_code == 404

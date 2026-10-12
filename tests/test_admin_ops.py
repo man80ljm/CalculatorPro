@@ -1,4 +1,4 @@
-"""只读运维后台：独立登录、统计，以及没有写接口。"""
+"""运维后台：独立登录、只读统计和限定范围的邀请码管理。"""
 import pytest
 from fastapi.testclient import TestClient
 
@@ -66,7 +66,7 @@ def test_unconfigured_admin_is_closed(app, monkeypatch):
 
 def test_wrong_password_and_teacher_password_rejected(app):
     with TestClient(app) as client:
-        created = client.post("/api/register", json={"username": "admin", "password": TEACHER_PASSWORD})
+        created = client.post("/api/register", json={"invite_code": "TST123", "username": "admin", "password": TEACHER_PASSWORD})
         assert created.status_code == 200, created.text
         wrong = client.post("/admin/api/login", json={"username": "admin", "password": "not-the-admin-pass"})
         assert wrong.status_code == 401
@@ -152,7 +152,7 @@ def test_overview_users_and_jobs_match_seeded_data(app):
     from web_app.report_jobs import ReportJob, _JOBS, _LOCK, _succeed
 
     with TestClient(app) as client:
-        created_a = client.post("/api/register", json={"username": "teacher.a@school.edu", "password": TEACHER_PASSWORD})
+        created_a = client.post("/api/register", json={"invite_code": "TST123", "username": "teacher.a@school.edu", "password": TEACHER_PASSWORD})
         assert created_a.status_code == 200, created_a.text
         assert client.post("/api/login", json={"username": "teacher.a@school.edu", "password": TEACHER_PASSWORD}).status_code == 200
         teacher_a = client.get("/api/me").json()
@@ -172,7 +172,7 @@ def test_overview_users_and_jobs_match_seeded_data(app):
                 )
             )
 
-        created_b = client.post("/api/register", json={"username": "teacher.b@school.edu", "password": TEACHER_PASSWORD})
+        created_b = client.post("/api/register", json={"invite_code": "TST123", "username": "teacher.b@school.edu", "password": TEACHER_PASSWORD})
         assert created_b.status_code == 200, created_b.text
         assert client.post("/api/login", json={"username": "teacher.b@school.edu", "password": TEACHER_PASSWORD}).status_code == 200
         teacher_b = client.get("/api/me").json()
@@ -271,7 +271,7 @@ def test_failed_job_records_short_error(app):
         assert "坏了" * 200 not in event["error"]
 
 
-def test_no_admin_write_routes(app):
+def test_admin_writes_limited_to_invitations(app):
     paths = _admin_routes(app)
     assert paths
     post_paths = set()
@@ -279,10 +279,10 @@ def test_no_admin_write_routes(app):
         lowered = path.lower()
         for banned in _BANNED_PATH:
             assert banned not in lowered
-        assert not (_WRITE_METHODS & methods)
+        assert not (_WRITE_METHODS & methods) or path in {"/admin/api/invites/{invitation_id}", "/admin/api/invites/{invitation_id:int}"}
         if "POST" in methods:
             post_paths.add(path)
-    assert post_paths == {"/admin/api/login", "/admin/api/logout"}
+    assert post_paths == {"/admin/api/login", "/admin/api/logout", "/admin/api/invites"}
 
     with TestClient(app) as client:
         assert client.post("/admin/api/login", json={"username": "admin", "password": ADMIN_PASSWORD}).status_code == 200
@@ -316,7 +316,7 @@ def test_admin_pages_static_and_host_gate(app, monkeypatch):
         assert login.status_code == 200
         assert "运维" in login.text
         assert "static/admin.css" in login.text
-        assert "只读" in login.text
+        assert "管理邀请码" in login.text
         css = client.get("/admin/static/admin.css")
         assert css.status_code == 200
         assert ".shell" in css.text

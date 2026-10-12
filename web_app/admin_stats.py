@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
-from web_app.db import Course, CourseFile, ReportJobEvent, Term, User, UserSession, session_scope
+from web_app.db import InvitationCode, InvitationRegistration, Course, CourseFile, ReportJobEvent, Term, User, UserSession, session_scope
 from web_app.deepseek_pool import queue_depth
 from web_app.report_jobs import list_jobs_for_admin
 
@@ -107,6 +107,9 @@ def build_users() -> dict:
                 .group_by(CourseFile.user_id)
             ).all()
         )
+        from web_app.invitations import public_invitation
+        invitations = {row.owner_user_id: row for row in db.scalars(select(InvitationCode).where(InvitationCode.owner_user_id.is_not(None))).all()}
+        registrations = {row.user_id: row for row in db.scalars(select(InvitationRegistration)).all()}
         rows = []
         for user in users:
             rows.append(
@@ -118,6 +121,8 @@ def build_users() -> dict:
                     "term_count": term_counts.get(user.id, 0),
                     "last_login_at": _iso(last_login.get(user.id)),
                     "last_report_at": _iso(last_report.get(user.id)),
+                    "invitation": public_invitation(invitations[user.id], user.username) if user.id in invitations else None,
+                    "invited_by": registrations[user.id].invited_by if user.id in registrations else "",
                 }
             )
     return {"users": rows}

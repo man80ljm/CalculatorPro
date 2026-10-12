@@ -113,7 +113,7 @@ def app(tmp_path, monkeypatch):
 @pytest.fixture
 def client(app):
     with TestClient(app) as test_client:
-        created = test_client.post("/api/register", json={"username": "teacher", "password": PASSWORD})
+        created = test_client.post("/api/register", json={"invite_code": "TST123", "username": "teacher", "password": PASSWORD})
         assert created.status_code == 200, created.text
         logged = test_client.post("/api/login", json={"username": "teacher", "password": PASSWORD})
         assert logged.status_code == 200, logged.text
@@ -162,18 +162,18 @@ def test_secret_key_required(monkeypatch, tmp_path):
 
 def test_register_duplicate_and_weak_password(app):
     with TestClient(app) as anonymous:
-        weak = anonymous.post("/api/register", json={"username": "new-teacher", "password": "short"})
+        weak = anonymous.post("/api/register", json={"invite_code": "TST123", "username": "new-teacher", "password": "short"})
         assert weak.status_code == 400
         assert "8" in weak.json()["detail"]
-        created = anonymous.post("/api/register", json={"username": "New.Teacher@School.edu", "password": PASSWORD})
+        created = anonymous.post("/api/register", json={"invite_code": "TST123", "username": "New.Teacher@School.edu", "password": PASSWORD})
         assert created.status_code == 200, created.text
-        duplicate = anonymous.post("/api/register", json={"username": "new.teacher@school.edu", "password": PASSWORD})
+        duplicate = anonymous.post("/api/register", json={"invite_code": "TST123", "username": "new.teacher@school.edu", "password": PASSWORD})
         assert duplicate.status_code == 409
 
 
 def test_login_wrong_password_logout_and_cookie_flags(app):
     with TestClient(app) as anonymous:
-        anonymous.post("/api/register", json={"username": "teacher", "password": PASSWORD})
+        anonymous.post("/api/register", json={"invite_code": "TST123", "username": "teacher", "password": PASSWORD})
         bad = anonymous.post("/api/login", json={"username": "teacher", "password": "wrong-password"})
         assert bad.status_code == 401
         missing = anonymous.post("/api/login", json={"username": "ghost-user", "password": PASSWORD})
@@ -196,7 +196,7 @@ def test_login_wrong_password_logout_and_cookie_flags(app):
 def test_cookie_secure_flag(app, monkeypatch):
     monkeypatch.setenv("COOKIE_SECURE", "true")
     with TestClient(app) as anonymous:
-        anonymous.post("/api/register", json={"username": "secure-user", "password": PASSWORD})
+        anonymous.post("/api/register", json={"invite_code": "TST123", "username": "secure-user", "password": PASSWORD})
         logged = anonymous.post("/api/login", json={"username": "secure-user", "password": PASSWORD})
         assert "secure" in logged.headers["set-cookie"].lower()
 
@@ -249,7 +249,7 @@ def test_register_rate_limit(app):
     try:
         with TestClient(app) as anonymous:
             statuses = [
-                anonymous.post("/api/register", json={"username": f"user{index}", "password": PASSWORD}).status_code
+                anonymous.post("/api/register", json={"invite_code": "TST123", "username": f"user{index}", "password": PASSWORD}).status_code
                 for index in range(3)
             ]
         assert statuses == [200, 200, 429]
@@ -298,8 +298,8 @@ def test_course_crud_and_pasted_relation_grid(client):
 
 def test_user_isolation(app, tmp_path):
     with TestClient(app) as alice, TestClient(app) as bob:
-        assert alice.post("/api/register", json={"username": "alice", "password": "alice-pass"}).status_code == 200
-        assert bob.post("/api/register", json={"username": "bob", "password": "bob-password"}).status_code == 200
+        assert alice.post("/api/register", json={"invite_code": "TST123", "username": "alice", "password": "alice-pass"}).status_code == 200
+        assert bob.post("/api/register", json={"invite_code": "TST123", "username": "bob", "password": "bob-password"}).status_code == 200
         assert alice.post("/api/login", json={"username": "alice", "password": "alice-pass"}).status_code == 200
         assert bob.post("/api/login", json={"username": "bob", "password": "bob-password"}).status_code == 200
         created = alice.post("/api/courses", json={"name": "仅甲可见", "settings": _settings()})
@@ -554,7 +554,7 @@ def test_upload_limit(client):
 
 def test_password_change_revokes_other_sessions(app):
     with TestClient(app) as first, TestClient(app) as second:
-        first.post("/api/register", json={"username": "multi-device", "password": PASSWORD})
+        first.post("/api/register", json={"invite_code": "TST123", "username": "multi-device", "password": PASSWORD})
         assert first.post("/api/login", json={"username": "multi-device", "password": PASSWORD}).status_code == 200
         assert second.post("/api/login", json={"username": "multi-device", "password": PASSWORD}).status_code == 200
         assert second.get("/api/me").status_code == 200

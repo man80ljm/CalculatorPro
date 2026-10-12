@@ -15,6 +15,7 @@
     </div>
     <div class="row-actions">
       <span class="hint" id="who"></span>
+      <button class="ghost" id="inviteBtn" type="button">我的邀请码</button>
       <button class="ghost" id="passwordBtn" type="button">修改密码</button>
       <button class="ghost" id="logoutBtn" type="button">退出</button>
     </div>
@@ -56,6 +57,16 @@
         <footer class="dlg-foot"><button type="button" class="secondary" data-close>暂不删除</button><button type="button" class="danger" id="confirmDeleteCourse">删除课程及资料</button></footer>
       </div>
     </dialog>
+    <section id="invitePanel" hidden aria-labelledby="inviteTitle">
+      <h2 id="inviteTitle">我的邀请码</h2>
+      <p class="hint">朋友注册时填写这个邀请码，即可加入。</p>
+      <div class="row-actions" style="margin-top:12px">
+        <input id="personalInviteCode" aria-label="我的专属邀请码" readonly style="width:160px;font-family:monospace;font-size:22px;letter-spacing:3px" autocomplete="off">
+        <button type="button" id="copyInviteBtn" class="secondary" disabled>复制邀请码</button>
+      </div>
+      <p class="hint" id="personalInviteStatus" aria-live="polite"></p>
+      <p class="hint" id="inviteMsg" role="status"></p>
+    </section>
     <section id="passwordPanel" hidden>
       <h2>修改密码</h2>
       <div class="fields">

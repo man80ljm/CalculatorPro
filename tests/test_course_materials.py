@@ -132,7 +132,7 @@ def test_materials_are_private_and_course_deletion_cleans_batches(client, app):
     assert client.post(f"/api/courses/{course_id}/export").status_code == 200
     version = _catalog(client, course_id)["terms"][0]["versions"][0]
     with TestClient(app) as other:
-        assert other.post("/api/register", json={"username": "other-user", "password": PASSWORD}).status_code == 200
+        assert other.post("/api/register", json={"invite_code": "TST123", "username": "other-user", "password": PASSWORD}).status_code == 200
         assert other.post("/api/login", json={"username": "other-user", "password": PASSWORD}).status_code == 200
         assert other.get(f"/api/courses/{course_id}/materials").status_code == 404
         assert other.get(f"/api/courses/{course_id}/files/{version['archive']['id']}").status_code == 404

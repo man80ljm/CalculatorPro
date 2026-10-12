@@ -95,7 +95,10 @@
       <input id="registerUser" name="username" type="text" autocomplete="username" required>
       <label for="registerPassword">密码</label>
       <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required>
-      <p class="hint">密码至少 8 位。注册后即可登录，不需要邀请码。</p>
+      <p class="hint">密码至少 8 位。</p>
+      <label for="registerInvite">邀请码</label>
+      <input id="registerInvite" name="invite_code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" placeholder="6 位字母和数字" required aria-describedby="inviteHint">
+      <p class="hint" id="inviteHint">填写有效邀请码才能注册。成功后会获得自己的 6 位专属邀请码。</p>
       <button type="submit">注册</button>
       <button class="ghost" id="showLogin" type="button">返回登录</button>
       <p class="error" id="registerError" role="alert"></p>
@@ -112,17 +115,17 @@
       registerForm.hidden = true;
       loginForm.hidden = false;
     });
-    if (location.hash === "#register") {
+    if (location.hash === "#register" || location.pathname === "/register") {
       loginForm.hidden = true;
       registerForm.hidden = false;
     }
 
-    async function submitAuth(url, username, password, errorNode) {
+    async function submitAuth(url, username, password, errorNode, inviteCode) {
       errorNode.textContent = "";
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, ...(inviteCode === undefined ? {} : { invite_code: inviteCode }) }),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -157,13 +160,25 @@
       button.disabled = true;
       const username = document.getElementById("registerUser").value;
       const password = document.getElementById("registerPassword").value;
+      let created = false;
       try {
-        const created = await submitAuth("/api/register", username, password, document.getElementById("registerError"));
+        created = await submitAuth("/api/register", username, password, document.getElementById("registerError"), document.getElementById("registerInvite").value.trim().toUpperCase());
         if (!created) return;
+        document.getElementById("loginUser").value = username;
+        document.getElementById("loginPassword").value = password;
         const ok = await submitAuth("/api/login", username, password, document.getElementById("registerError"));
-        if (ok) location.href = "/";
+        if (ok) { location.href = "/"; return; }
+        registerForm.hidden = true;
+        loginForm.hidden = false;
+        document.getElementById("loginError").textContent = "注册成功，请登录。";
       } catch (err) {
-        document.getElementById("registerError").textContent = "无法连接服务器";
+        if (created) {
+          registerForm.hidden = true;
+          loginForm.hidden = false;
+          document.getElementById("loginError").textContent = "注册成功，自动登录未完成，请登录。";
+        } else {
+          document.getElementById("registerError").textContent = "无法连接服务器。请稍后重试；若账号已创建，可直接登录。";
+        }
       } finally {
         button.disabled = false;
       }

@@ -35,6 +35,7 @@ from web_app.auth import (
     start_session,
 )
 from web_app.course_versions import term_curriculum
+from web_app.invitations import InvitationError, default_user_limit, personal_invitation
 from web_app.db import Course, CourseFile, FileBatch, NotFound, Term, User, init_db, ping_db, session_scope, utcnow, write_context
 from web_app.course_materials import file_public, history_version_files, make_archive, materials_catalog
 from web_app.download_names import archive_filename
@@ -282,6 +283,8 @@ def _api(fn):
             return response
         except NotFound:
             return _json_error(404, "没有找到")
+        except InvitationError as exc:
+            return _json_error(exc.status, str(exc))
         except AuthError as exc:
             return _json_error(exc.status, str(exc), code=exc.code)
         except ServiceError as exc:
@@ -552,6 +555,7 @@ def create_app() -> FastAPI:
     get_secret_key()
     ensure_upload_root()
     init_db()
+    default_user_limit()
     from contextlib import asynccontextmanager
     from web_app.report_jobs import start_job_runtime, stop_job_runtime
     @asynccontextmanager
@@ -588,14 +592,16 @@ def create_app() -> FastAPI:
             return _json_error(429, "尝试次数过多，请稍后再试")
         try:
             body = await _json_body(request)
-            register_user(str(body.get("username") or ""), str(body.get("password") or ""))
-        except AuthError as exc:
+            _user_id, _username, invitation = await asyncio.to_thread(register_user,
+                str(body.get("username") or ""), str(body.get("password") or ""), body.get("invite_code")
+            )
+        except (AuthError, InvitationError) as exc:
             return _json_error(exc.status, str(exc))
         except ServiceError as exc:
             return _json_error(exc.status, str(exc))
         except SQLAlchemyError:
             return _json_error(503, "数据库不可用")
-        return JSONResponse({"ok": True})
+        return JSONResponse({"ok": True, "invitation": invitation}, headers={"Cache-Control": "no-store"})
 
     @application.post("/api/login")
     async def login(request: Request):
@@ -635,7 +641,9 @@ def create_app() -> FastAPI:
             user = db.get(User, user_id)
             if user is None:
                 raise AuthError("未登录或登录已过期", status=401)
-            return JSONResponse({"id": user.id, "username": user.username})
+            username = user.username
+        return JSONResponse({"id": user_id, "username": username, "invitation": await asyncio.to_thread(personal_invitation, user_id)},
+                            headers={"Cache-Control": "no-store"})
 
     application.get("/api/me")(me)
 

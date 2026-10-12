@@ -9,6 +9,7 @@
     const opts = options || {};
     const headers = { Accept: "application/json" };
     if (opts.body) headers["Content-Type"] = "application/json";
+    if (opts.csrf) headers["X-Admin-CSRF"] = opts.csrf;
     const response = await fetch(path, {
       method: opts.method || "GET",
       headers: headers,
@@ -63,6 +64,10 @@
     running: "进行中",
     success: "成功",
     fail: "失败",
+    active: "可使用",
+    disabled: "已停用",
+    exhausted: "次数已用完",
+    deleted: "已删除",
   };
 
   function cell(text) {
@@ -194,6 +199,8 @@
 
   const userColumns = [
     { label: "邮箱 / 用户名", cell: function (row) { return cell(row.username); } },
+    { label: "专属邀请码", cell: function (row) { return cell(row.invitation ? row.invitation.code + (row.invitation.status === "deleted" ? "（已删除）" : "") : "首次登录时生成"); } },
+    { label: "邀请来源", cell: function (row) { return cell(row.invited_by || "历史账号"); } },
     { label: "注册时间", cell: function (row) { return cell(formatTime(row.created_at)); } },
     { label: "课程", cell: function (row) { return cell(row.course_count); } },
     { label: "学期", cell: function (row) { return cell(row.term_count); } },
@@ -230,6 +237,148 @@
     );
   }
 
+  let invitationRows = [];
+  let invitationCsrf = "";
+  let invitationBusy = false;
+  let editingInvitation = null;
+  let deletingInvitation = null;
+
+  const invitationColumns = [
+    { label: "邀请码", cell: function (row) { const td = cell(row.code); td.className = "invite-code"; return td; } },
+    { label: "归属", cell: function (row) { return cell(row.owner_user_id === null ? "管理员新增" : row.owner); } },
+    { label: "注册次数", cell: function (row) { return cell(row.used_count + " / " + (row.max_uses === null ? "不限" : row.max_uses) + (row.remaining === null ? "" : " · 剩余 " + row.remaining)); } },
+    { label: "状态", cell: function (row) { return statusCell(row.status); } },
+    { label: "操作", cell: function (row) {
+      const td = document.createElement("td");
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      [["copy", "复制"], ["edit", "次数"], ["toggle", row.enabled ? "停用" : "启用"], ["delete", "删除"]].forEach(function (item) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = item[0] === "delete" ? "danger" : "ghost";
+        button.dataset.action = item[0];
+        button.dataset.id = row.id;
+        button.textContent = item[1];
+        actions.appendChild(button);
+      });
+      td.appendChild(actions);
+      return td;
+    } },
+  ];
+
+  function invitationNotice(message) {
+    $("notice").textContent = message;
+    $("notice").hidden = !message;
+  }
+
+  async function loadInvitations() {
+    const data = await loadJson("api/invites");
+    if (!data) return false;
+    invitationRows = data.invites || [];
+    invitationCsrf = data.csrf_token;
+    $("invites").replaceChildren(table(invitationColumns, invitationRows, "还没有邀请码，点击「新增邀请码」即可创建。"));
+    return true;
+  }
+
+  async function writeInvitation(path, method, body) {
+    if (!invitationCsrf) throw new Error("请刷新列表后重试。");
+    const result = await api(path, { method: method, csrf: invitationCsrf, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (result.response.status === 401) {
+      location.href = "login";
+      throw new Error("登录已过期，请重新登录。");
+    }
+    if (!result.response.ok) throw new Error(result.data.detail || "操作失败，请重试。");
+    return result.data;
+  }
+
+  function setInvitationBusy(value) {
+    invitationBusy = value;
+    document.querySelectorAll('#invites button, #new-invite, #refresh, #invite-dialog button, #delete-dialog button').forEach(function (button) { button.disabled = value; });
+  }
+
+  function openInvitationEditor(row) {
+    editingInvitation = row || null;
+    $("invite-dialog-title").textContent = row ? "调整注册次数" : "新增邀请码";
+    $("invite-owner").textContent = row ? row.code + " · " + row.owner : "管理员新增";
+    $("max-uses").min = row ? row.used_count : 0;
+    $("max-uses").value = row && row.max_uses !== null ? row.max_uses : Math.max(5, row ? row.used_count : 0);
+    $("unlimited").checked = !!row && row.max_uses === null;
+    $("max-uses").disabled = $("unlimited").checked;
+    $("limit-hint").textContent = row ? "已注册 " + row.used_count + " 人。总次数不能小于已使用次数；增加额度后可以继续注册。" : "6 位邀请码自动生成。填写允许注册的总人数，也可选择不限次数。";
+    $("invite-error").textContent = "";
+    $("save-invite").textContent = row ? "保存次数" : "生成邀请码";
+    $("invite-dialog").showModal();
+  }
+
+  function bindInvitations() {
+    $("new-invite").addEventListener("click", function () { openInvitationEditor(null); });
+    $("unlimited").addEventListener("change", function () { $("max-uses").disabled = this.checked; });
+    document.querySelectorAll("dialog [data-close]").forEach(function (button) {
+      button.addEventListener("click", function () { if (!invitationBusy) button.closest("dialog").close(); });
+    });
+    document.querySelectorAll("dialog").forEach(function (dialog) {
+      dialog.addEventListener("cancel", function (event) { if (invitationBusy) event.preventDefault(); });
+    });
+    $("invite-form").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      if (invitationBusy) return;
+      const maxUses = $("unlimited").checked ? null : Number($("max-uses").value);
+      $("invite-error").textContent = "";
+      setInvitationBusy(true);
+      try {
+        const result = await writeInvitation(editingInvitation ? "api/invites/" + editingInvitation.id : "api/invites", editingInvitation ? "PATCH" : "POST", { max_uses: maxUses });
+        $("invite-dialog").close();
+        invitationNotice(editingInvitation ? "注册次数已更新。" : "已生成邀请码 " + result.invitation.code + "，可在列表中复制。" );
+        if (!await loadInvitations()) showBanner("已保存，但列表刷新失败，请点击刷新。");
+      } catch (err) {
+        if ($("invite-dialog").open) $("invite-error").textContent = err.message || "无法连接服务器，请重试。";
+        else showBanner("已保存，请刷新列表确认。");
+      } finally { setInvitationBusy(false); }
+    });
+    $("invites").addEventListener("click", async function (event) {
+      const button = event.target.closest("button[data-action]");
+      if (!button || invitationBusy) return;
+      const row = invitationRows.find(function (item) { return item.id === Number(button.dataset.id); });
+      if (!row) return;
+      const action = button.dataset.action;
+      if (action === "edit") { openInvitationEditor(row); return; }
+      if (action === "delete") {
+        deletingInvitation = row;
+        $("delete-message").textContent = "确定删除 " + row.code + "（" + row.owner + "）吗？";
+        $("delete-error").textContent = "";
+        $("delete-dialog").showModal();
+        return;
+      }
+      if (action === "copy") {
+        try { await navigator.clipboard.writeText(row.code); invitationNotice("已复制邀请码 " + row.code + "。" ); }
+        catch (err) { invitationNotice("请手动复制邀请码：" + row.code); }
+        return;
+      }
+      if (action === "toggle") {
+        setInvitationBusy(true);
+        try {
+          await writeInvitation("api/invites/" + row.id, "PATCH", { enabled: !row.enabled });
+          invitationNotice(row.enabled ? "邀请码已停用。" : "邀请码已启用。" );
+          if (!await loadInvitations()) showBanner("已保存，但列表刷新失败，请点击刷新。");
+        } catch (err) { showBanner(err.message || "无法连接服务器，请重试。"); }
+        finally { setInvitationBusy(false); }
+      }
+    });
+    $("confirm-delete").addEventListener("click", async function () {
+      if (invitationBusy || !deletingInvitation) return;
+      setInvitationBusy(true);
+      try {
+        await writeInvitation("api/invites/" + deletingInvitation.id, "DELETE");
+        $("delete-dialog").close();
+        invitationNotice("邀请码已删除，已有账号和邀请记录保留。" );
+        if (!await loadInvitations()) showBanner("已删除，但列表刷新失败，请点击刷新。");
+      } catch (err) {
+        if ($("delete-dialog").open) $("delete-error").textContent = err.message || "无法连接服务器，请重试。";
+        else showBanner("已删除，请刷新列表确认。");
+      } finally { setInvitationBusy(false); }
+    });
+  }
+
   async function load() {
     if (page === "overview") {
       const data = await loadJson("api/overview");
@@ -240,6 +389,8 @@
     } else if (page === "jobs") {
       const data = await loadJson("api/jobs");
       if (data) fillJobs(data);
+    } else if (page === "invites") {
+      await loadInvitations();
     }
   }
 
@@ -277,10 +428,11 @@
   }
 
   const refresh = $("refresh");
-  if (refresh) refresh.addEventListener("click", load);
+  if (refresh) refresh.addEventListener("click", function () { load().catch(function () { showBanner("无法连接服务器，请稍后刷新。"); }); });
+  if (page === "invites") bindInvitations();
 
-  if (page === "overview" || page === "users" || page === "jobs") {
-    load();
+  if (page === "overview" || page === "users" || page === "jobs" || page === "invites") {
+    load().catch(function () { showBanner("无法连接服务器，请稍后刷新。"); });
     if (page === "overview" || page === "jobs") {
       window.setInterval(function () {
         if (!document.hidden) load();
