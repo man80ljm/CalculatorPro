@@ -1084,6 +1084,8 @@ def create_app() -> FastAPI:
 
     attach(application)
     attach_admin(application)
+    from web_app.teaching.routes import attach_teaching
+    attach_teaching(application)
     application.mount("/static", RevalidatedStaticFiles(directory=STATIC_DIR), name="static")
     application.add_middleware(_Guard)
     application.add_middleware(AdminHostMiddleware)

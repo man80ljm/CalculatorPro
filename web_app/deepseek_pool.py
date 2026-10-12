@@ -239,6 +239,8 @@ class Pool:
         self._signature: tuple = ()
         self._rr = 0
         self._seq = 0
+        self.external_inflight = 0
+        self.aborted = False
 
     def reload(self) -> None:
         specs = load_specs()
@@ -269,7 +271,7 @@ class Pool:
 
     def _try_reserve(self) -> Account | None:
         limit = _concurrency()
-        if sum(account.inflight for account in self.accounts) >= max(1, _env_int("DEEPSEEK_GLOBAL_CONCURRENCY", 5)):
+        if sum(account.inflight for account in self.accounts) + self.external_inflight >= max(1, _env_int("DEEPSEEK_GLOBAL_CONCURRENCY", 5)):
             return None
         available = [account for account in self.accounts if account.keys and account.inflight < limit]
         if not available:
@@ -398,6 +400,7 @@ class Pool:
 
     def abort(self) -> None:
         with self.lock:
+            self.aborted = True
             waiters = list(self.waiters)
             self.waiters.clear()
             for waiter in waiters:
@@ -597,3 +600,31 @@ def chat_completions(
             lease.release()
         else:
             ticket.cancel()
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def external_slot(wait_timeout: float = 180):
+    """Independent administrator API keys share the global request ceiling."""
+    pool = get_pool()
+    deadline = time.monotonic() + wait_timeout
+    while True:
+        with pool.lock:
+            if pool.aborted: raise PoolError("排队已取消")
+            pool.reload()
+            inflight = sum(account.inflight for account in pool.accounts) + pool.external_inflight
+            if not pool._someone_ahead("syllabus") and inflight < max(1, _env_int("DEEPSEEK_GLOBAL_CONCURRENCY", 5)):
+                pool.external_inflight += 1
+                break
+        if time.monotonic() >= deadline: raise PoolError("API 请求排队超时，请稍后重新识别")
+        threading.Event().wait(0.1)
+    try:
+        yield
+    finally:
+        with pool.lock:
+            pool.external_inflight = max(0, pool.external_inflight - 1)
+            granted = pool._grant()
+            pool._emit(pool._mark_positions())
+            for item in granted: item.event.set()

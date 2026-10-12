@@ -32,6 +32,13 @@ STATIC_DIR = Path(__file__).resolve().parent / "static" / "admin"
 _STATIC_FILES = {
     "admin.css": "text/css; charset=utf-8",
     "admin.js": "text/javascript; charset=utf-8",
+    "teaching-ui.js": "text/javascript; charset=utf-8",
+    "teaching-api.js": "text/javascript; charset=utf-8",
+    "schedule.js": "text/javascript; charset=utf-8",
+    "settings.js": "text/javascript; charset=utf-8",
+    "teaching.css": "text/css; charset=utf-8",
+    "schedule.css": "text/css; charset=utf-8",
+    "settings.css": "text/css; charset=utf-8",
 }
 _PASS_THROUGH = {"/healthz", "/favicon.ico"}
 

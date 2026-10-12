@@ -329,3 +329,50 @@ class InvitationRegistration(Base):
     invited_by: Mapped[str] = mapped_column(String(128))
     inviter_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AdminApiConfiguration(Base):
+    __tablename__ = "admin_api_configuration"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    encrypted_config: Mapped[str] = mapped_column(Text)
+    last_test: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class ScheduleDocument(Base):
+    __tablename__ = "schedule_documents"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(200))
+    digest: Mapped[str] = mapped_column(String(64), unique=True)
+    term: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ScheduleDraft(Base):
+    __tablename__ = "schedule_drafts"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(200))
+    digest: Mapped[str] = mapped_column(String(64), index=True)
+    model: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ScheduleRecord(Base):
+    __tablename__ = "schedule_records"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("schedule_documents.id"), index=True)
+    term_id: Mapped[str] = mapped_column(String(20), index=True)
+    course_name: Mapped[str] = mapped_column(String(160), index=True)
+    payload: Mapped[str] = mapped_column(Text)
+
+
+class ScheduleRecognitionChunk(Base):
+    __tablename__ = "schedule_recognition_chunks"
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)
+    usage: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

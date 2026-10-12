@@ -8,7 +8,7 @@ from web_app.report_jobs import reset_report_jobs
 ADMIN_PASSWORD = "test-admin-pass-9"
 TEACHER_PASSWORD = "teacher-pass-1"
 _WRITE_METHODS = {"DELETE", "PUT", "PATCH"}
-_BANNED_PATH = ("impersonate", "password", "delete", "settings")
+_BANNED_PATH = ("impersonate", "password", "delete")
 
 
 @pytest.fixture
@@ -282,7 +282,7 @@ def test_admin_writes_limited_to_invitations(app):
         assert not (_WRITE_METHODS & methods) or path in {"/admin/api/invites/{invitation_id}", "/admin/api/invites/{invitation_id:int}"}
         if "POST" in methods:
             post_paths.add(path)
-    assert post_paths == {"/admin/api/login", "/admin/api/logout", "/admin/api/invites"}
+    assert post_paths == {"/admin/api/login", "/admin/api/logout", "/admin/api/invites", "/admin/api/settings", "/admin/api/settings/test", "/admin/api/schedule/analyze", "/admin/api/schedule/save", "/admin/api/schedule/record"}
 
     with TestClient(app) as client:
         assert client.post("/admin/api/login", json={"username": "admin", "password": ADMIN_PASSWORD}).status_code == 200

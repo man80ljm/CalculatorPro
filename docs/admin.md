@@ -1,6 +1,6 @@
 # 运维后台与邀请码管理
 
-后台提供教师数、课程数、报告成败和排队情况统计，以及邀请码新增、次数调整、启停和删除。课程和报告功能保持只读，不能改密码、删课、代登录、改设置或重新生成报告。
+后台提供教师数、课程数、报告成败和排队情况统计，以及邀请码新增、次数调整、启停和删除、PDF 课表管理和识别 API 设置。课程和报告功能保持只读，不能改密码、删课、代登录、重新生成报告。
 
 页面在本服务的 `/admin`。`/admin` 会转到 `/admin/`。目标子域是 `admin.calc.geekhuang.com`，由 nginx 反代到这个前缀，或按 Host 分流。
 
@@ -69,7 +69,7 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 | PATCH | `/admin/api/invites/{id}` | `{"max_uses": 5}` 或 `{"enabled": false}`，可同时修改 |
 | DELETE | `/admin/api/invites/{id}` | 删除邀请码，已注册账号和邀请记录保留 |
 
-上述写接口均要求独立的管理员 Cookie，并在 `X-Admin-CSRF` 头中携带列表接口返回的、与当前会话绑定的令牌。POST/PATCH 只接受 JSON，拒绝跨来源写请求。教师 Cookie 无管理权限。除这组邀请码接口及登录/退出外，后台没有写接口。
+上述写接口均要求独立的管理员 Cookie，并在 `X-Admin-CSRF` 头中携带列表接口返回的、与当前会话绑定的令牌。POST/PATCH 只接受 JSON，拒绝跨来源写请求。教师 Cookie 无管理权限。后台写接口仅包含登录/退出、邀请码管理、课表识别/保存/修正和识别 API 设置。
 
 `max_uses` 表示**可注册总次数**，不是额外次数。例如已用 2 次、总次数 5 次，剩余 3 次；总次数不能降到 2 以下。`0` 表示没有可用名额，`null` 表示不限次数。停用不会抹掉已用次数，重新启用时仍受额度限制。删除后码不可恢复、不可重复生成，个人码被删除后也不会自行补发。
 
@@ -118,3 +118,24 @@ server {
   }
 }
 ```
+
+
+## 课表管理与识别设置
+
+页面 `/admin/schedule` 提供文字层 PDF 上传（8 MB、15 页以内）、后台识别、进度查询、核对入库、学期/课程/教师/班级查询和记录修正。关闭弹窗不会终止识别，草稿和已完成批次保存到正式数据库。同一 PDF 不会重复入库，重复上传会复用草稿或提示已入库。重启中断的任务会明确提示重新选择 PDF，已完成批次可复用；完整原 PDF 不长期保存。扫描 PDF 明确拒绝，不以示例内容代替结果。
+
+页面 `/admin/settings` 提供课表识别使用的 API 来源、模型、连接测试和保存。默认沿用已配置的服务器 DeepSeek 单密钥或 A/B 多密钥池，也可填写独立密钥。设置仅作用于课表识别，不覆盖原报告服务的环境配置。独立密钥通过 Fernet 加密保存至数据库，密钥材料从服务器 `SECRET_KEY` 经独立用途 HMAC 派生，不能公开或随意更换这项服务器配置。页面不回显密钥，留空保留之前保存的独立密钥。连接测试只请求官方模型列表，验证认证与模型可用性；不验证余额或教学内容生成。接口固定为官方 HTTPS，不允许任意地址或重定向。
+
+| 方法 | 路径 | 内容 |
+| --- | --- | --- |
+| GET / POST | `/admin/api/settings` | 读取安全元数据 / 保存 `source`、`model`、`key` |
+| POST | `/admin/api/settings/test` | 测试所选 API 连接（每分钟最多 5 次） |
+| GET | `/admin/api/schedule` | 已保存课表、开课记录及待处理草稿 |
+| POST | `/admin/api/schedule/analyze` | `filename` + base64 `pdf`，返回 202 任务 ID（每分钟最多 3 次，同一服务同时识别 1 份） |
+| GET | `/admin/api/schedule/jobs/{id}` | 识别进度或待核对结果 |
+| POST | `/admin/api/schedule/save` | `jobId` + 已核对的 `result`，事务入库，重复保存幂等 |
+| POST | `/admin/api/schedule/record` | `id` + `record`，核对修正，多个教师按单教师记录拆分 |
+
+以上接口全部要求管理员 Cookie；写入还要求与当前会话绑定的 `X-Admin-CSRF` 和 JSON 正文。教师账号无法读取后台课表或 API 配置。新增 `admin_api_configuration`、`schedule_documents`、`schedule_drafts`、`schedule_records`、`schedule_recognition_chunks` 五张表，由 `init_db()` 兼容性创建，不改已有表。识别保存失败整笔回滚，原有课表保留。原文引用、待核对状态及学分/学时分别保留，未标明的学时不会推算。
+
+识别使用服务器配置时共用现有 DeepSeek 账号租约、密钥轮换和全站并发上限；独立 API 密钥也计入全站并发上限。本次用户明确选择先上线功能，本地 2 份已入库 PDF 的 512 条记录不迁移，仍保留在独立原型数据库。
