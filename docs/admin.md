@@ -139,3 +139,5 @@ server {
 以上接口全部要求管理员 Cookie；写入还要求与当前会话绑定的 `X-Admin-CSRF` 和 JSON 正文。教师账号无法读取后台课表或 API 配置。新增 `admin_api_configuration`、`schedule_documents`、`schedule_drafts`、`schedule_records`、`schedule_recognition_chunks` 五张表，由 `init_db()` 兼容性创建，不改已有表。识别保存失败整笔回滚，原有课表保留。原文引用、待核对状态及学分/学时分别保留，未标明的学时不会推算。
 
 识别使用服务器配置时共用现有 DeepSeek 账号租约、密钥轮换和全站并发上限；独立 API 密钥也计入全站并发上限。本次用户明确选择先上线功能，本地 2 份已入库 PDF 的 512 条记录不迁移，仍保留在独立原型数据库。
+
+课表管理和设置已于北京时间 2026-10-12 以 `060073a` 上线。真实连接、PDF 流程、手机操作及资料保全结果见 [课表与设置上线记录](teaching-admin-deploy-20261012.md)。
