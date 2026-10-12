@@ -27,9 +27,26 @@
         <h1>任务</h1>
         <button type="button" id="refresh" class="ghost">刷新</button>
       </div>
-      <p class="note">当前进程里的报告任务来自内存。成功和失败会写入数据库，进程重启后仍可查看。这里不能重新触发报告。</p>
+      <p class="note">选择用户查看对应的历史记录，每页 10 条，按时间倒序展示。这里不能重新触发报告。</p>
       <p id="error" class="banner" hidden></p>
-      <div id="jobs"></div>
+      <section id="jobs">
+        <h2 class="section-title">当前进程</h2>
+        <div id="jobs-live"></div>
+        <div class="history-head">
+          <h2 class="section-title">历史记录</h2>
+          <label class="history-filter" for="job-user">选择用户
+            <select id="job-user"><option value="">全部用户</option></select>
+          </label>
+        </div>
+        <div id="jobs-history" aria-busy="false"></div>
+        <div class="history-pagination">
+          <p id="jobs-summary" role="status" aria-live="polite"></p>
+          <div class="actions">
+            <button type="button" id="jobs-prev" class="ghost" disabled>上一页</button>
+            <button type="button" id="jobs-next" class="ghost" disabled>下一页</button>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
   <script src="static/admin.js"></script>

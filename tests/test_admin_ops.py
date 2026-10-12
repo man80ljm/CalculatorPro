@@ -380,3 +380,60 @@ def test_queue_depth_counts_waiting_tasks():
         assert queue_depth() == 1
     finally:
         reset_pool()
+
+
+def test_history_filters_before_pagination_and_reaches_older_records(app):
+    from datetime import datetime
+    from web_app.db import User, ReportJobEvent, session_scope
+    with session_scope() as db:
+        teachers = [User(username=name, password_hash="private-hash-must-not-leak")
+                    for name in ("filter.a", "filter.b", "filter.empty")]
+        db.add_all(teachers); db.flush()
+        a, b, empty = [user.id for user in teachers]
+        for owner, count in ((a, 105), (b, 12)):
+            db.add_all([ReportJobEvent(user_id=owner, course_id=999999, status="success",
+                                      duration_ms=1000, created_at=datetime(2026, 1, 1))
+                        for _ in range(count)])
+    with TestClient(app) as client:
+        assert client.get(f"/admin/api/jobs?user_id={a}&page=2").status_code == 401
+        assert client.post("/admin/api/login", json={"username":"admin","password":ADMIN_PASSWORD}).status_code == 200
+        def fetch(query=""):
+            response = client.get("/admin/api/jobs" + query)
+            assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+            assert "private-hash-must-not-leak" not in response.text
+            return response.json()
+        all_users = fetch()
+        assert all_users["history"]["total"] == 117
+        assert all_users["history"]["pages"] == 12
+        assert len(all_users["jobs"]) == 10
+        assert all(row["user_id"] == b for row in all_users["jobs"])
+        assert {user["id"] for user in all_users["history"]["users"]} == {a,b,empty}
+        first = fetch(f"?user_id={a}")
+        second = fetch(f"?user_id={a}&page=2")
+        last = fetch(f"?user_id={a}&page=11")
+        assert first["history"]["total"] == 105 and first["history"]["page_size"] == 10
+        assert len(first["jobs"]) == len(second["jobs"]) == 10 and len(last["jobs"]) == 5
+        ids = [row["event_id"] for row in first["jobs"]+second["jobs"]+last["jobs"]]
+        assert len(set(ids)) == 25 and ids == sorted(ids, reverse=True)
+        assert all(row["user_id"] == a for row in first["jobs"]+second["jobs"]+last["jobs"])
+        capped = fetch(f"?user_id={a}&page=1000000")
+        assert capped["history"]["page"] == 11 and capped["jobs"] == last["jobs"]
+        none = fetch(f"?user_id={empty}&page=10")
+        assert none["jobs"] == [] and none["history"]["total"] == 0 and none["history"]["page"] == 1
+
+
+def test_history_query_validation_keeps_live_tasks_unfiltered(app):
+    from web_app.db import User, session_scope
+    from web_app.report_jobs import ReportJob, _JOBS, _LOCK
+    with session_scope() as db:
+        users = [User(username=name,password_hash="unused-synthetic-hash") for name in ("live.a","live.b")]
+        db.add_all(users);db.flush();a,b=[user.id for user in users]
+    live=ReportJob(a,99999,99999)
+    with _LOCK: _JOBS[live.id]=live
+    with TestClient(app) as client:
+        assert client.post("/admin/api/login",json={"username":"admin","password":ADMIN_PASSWORD}).status_code==200
+        filtered=client.get(f"/admin/api/jobs?user_id={b}").json()
+        assert filtered["history"]["total"]==0
+        assert any(row["job_id"]==live.id and row["user_id"]==a for row in filtered["jobs"])
+        for query in ("page=0","page=-1","page=abc","page=100000001","user_id=0","user_id=-2","user_id=abc","user_id=2147483648"):
+            assert client.get("/admin/api/jobs?"+query).status_code==422,query

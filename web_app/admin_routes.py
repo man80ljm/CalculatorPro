@@ -7,7 +7,7 @@ import secrets
 from urllib.parse import urlsplit
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -210,12 +210,13 @@ def attach_admin(application: FastAPI) -> None:
         return _no_store(JSONResponse(payload))
 
     @application.get("/admin/api/jobs")
-    def admin_jobs(request: Request):
+    def admin_jobs(request: Request, user_id: int | None = Query(None, ge=1, le=2147483647),
+                   page: int = Query(1, ge=1, le=100000000)):
         denied = _require_admin(request)
         if denied is not None:
             return denied
         try:
-            payload = build_jobs()
+            payload = build_jobs(user_id=user_id, page=page)
         except SQLAlchemyError:
             return _json_error(503, "数据库不可用")
         return _no_store(JSONResponse(payload))

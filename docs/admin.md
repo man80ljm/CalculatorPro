@@ -44,7 +44,11 @@ python -c "from web_app.auth import hash_password; print(hash_password('replace-
 | --- | --- | --- |
 | GET | `/admin/api/overview` | 教师数、课程数、本周活跃教师、今日/本周报告成功和失败、排队深度 |
 | GET | `/admin/api/users` | 用户名、专属邀请码、邀请来源、注册时间、课程数、学期数、最近登录、最近报告 |
-| GET | `/admin/api/jobs` | 数据库里的报告任务与成功/失败记录，以及兼容的内存调试记录 |
+| GET | `/admin/api/jobs` | 报告任务及按用户分页的历史记录；可选 `user_id`、`page`（每页 10 条） |
+
+任务页在历史记录上方提供用户下拉框，默认显示全部用户最近 10 条，可切换用户及翻页查看更早记录。筛选在数据库查询前执行，不受原先最近 100 条的限制；实时任务保持展示全部用户。`GET /admin/api/jobs` 返回 `jobs` 和 `history`，后者包含用户列表、所选 `user_id`、页码、每页条数、总数与总页数。空结果返回第 1 页，超出总页数会回到最后一页。刷新及自动刷新保持用户和页码，切换用户回到第 1 页。
+
+手机端（宽度不超过 720 px）顶部右侧“菜单”按钮展开导航抽屉，退出入口收在抽屉底部。支持关闭按钮、点击遮罩、Esc 和浏览器返回关闭；电脑端保留左侧导航。设置页只展示 API 配置，邀请码在独立“邀请码”页面管理。
 
 页面：`/admin/` 概览，`/admin/users`，`/admin/jobs`，`/admin/invites` 邀请码管理，`/admin/login`。静态文件在 `/admin/static/`。HTML 里用相对路径（`static/admin.css`、`api/overview`），子域反代和 `/admin` 前缀两种接法都能用。
 

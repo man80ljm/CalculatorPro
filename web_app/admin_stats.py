@@ -10,7 +10,7 @@ from web_app.deepseek_pool import queue_depth
 from web_app.report_jobs import list_jobs_for_admin
 
 _SHANGHAI = timezone(timedelta(hours=8))
-_EVENT_LIMIT = 100
+_HISTORY_PAGE_SIZE = 10
 _ERROR_LIMIT = 180
 
 
@@ -159,16 +159,24 @@ def _public_job(row: dict, users: dict[int, str], courses: dict[int, str]) -> di
     }
 
 
-def build_jobs() -> dict:
+def build_jobs(*, user_id: int | None = None, page: int = 1) -> dict:
     live = list_jobs_for_admin()
     with session_scope() as db:
-        events = list(
-            db.scalars(
-                select(ReportJobEvent)
-                .order_by(ReportJobEvent.created_at.desc(), ReportJobEvent.id.desc())
-                .limit(_EVENT_LIMIT)
-            ).all()
-        )
+        event_query = select(ReportJobEvent)
+        count_query = select(func.count(ReportJobEvent.id))
+        if user_id is not None:
+            event_query = event_query.where(ReportJobEvent.user_id == user_id)
+            count_query = count_query.where(ReportJobEvent.user_id == user_id)
+        total = int(db.scalar(count_query) or 0)
+        pages = max(1, (total + _HISTORY_PAGE_SIZE - 1) // _HISTORY_PAGE_SIZE)
+        page = min(max(1, page), pages)
+        events = list(db.scalars(
+            event_query.order_by(ReportJobEvent.created_at.desc(), ReportJobEvent.id.desc())
+            .offset((page - 1) * _HISTORY_PAGE_SIZE).limit(_HISTORY_PAGE_SIZE)
+        ).all())
+        history_users = [{"id": identifier, "username": username}
+                         for identifier, username in db.execute(
+                             select(User.id, User.username).order_by(User.username, User.id)).all()]
         stored = []
         for event in events:
             stored.append(
@@ -190,4 +198,7 @@ def build_jobs() -> dict:
         users, courses = _names(db, user_ids, course_ids)
     jobs = [_public_job(row, users, courses) for row in live]
     jobs.extend(_public_job(row, users, courses) for row in stored)
-    return {"jobs": jobs}
+    return {"jobs": jobs, "history": {
+        "user_id": user_id, "page": page, "page_size": _HISTORY_PAGE_SIZE,
+        "total": total, "pages": pages, "users": history_users,
+    }}

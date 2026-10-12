@@ -217,24 +217,163 @@
     { label: "时间", cell: function (row) { return cell(formatTime(row.created_at)); } },
   ];
 
+  let jobsUser = "";
+  let jobsPage = 1;
+  let jobsPages = 1;
+  let jobsRequest = 0;
+  let jobsLoading = false;
+  let jobsUserOptions = "";
+
   function fillJobs(data) {
-    const jobs = data.jobs || [];
-    const live = jobs.filter(function (row) { return row.source === "memory"; });
-    const history = jobs.filter(function (row) { return row.source === "event"; });
-    const host = $("jobs");
-    host.replaceChildren();
-    const liveTitle = document.createElement("h2");
-    liveTitle.className = "section-title";
-    liveTitle.textContent = "当前进程";
-    const historyTitle = document.createElement("h2");
-    historyTitle.className = "section-title";
-    historyTitle.textContent = "历史记录";
-    host.append(
-      liveTitle,
-      table(jobColumns, live, "内存里没有报告任务"),
-      historyTitle,
-      table(jobColumns, history, "还没有成功或失败的记录")
-    );
+    const rows = data.jobs || [];
+    const info = data.history;
+    jobsPage = info.page;
+    jobsPages = info.pages;
+    $("jobs-live").replaceChildren(table(jobColumns, rows.filter(row => row.source === "memory"), "内存里没有报告任务"));
+    $("jobs-history").replaceChildren(table(jobColumns, rows.filter(row => row.source === "event"), jobsUser ? "该用户还没有报告历史记录" : "还没有成功或失败的记录"));
+    const signature = JSON.stringify(info.users);
+    if (signature !== jobsUserOptions) {
+      jobsUserOptions = signature;
+      const options = [new Option("全部用户", "")];
+      info.users.forEach(user => options.push(new Option(user.username, String(user.id))));
+      $("job-user").replaceChildren(...options);
+    }
+    $("job-user").value = jobsUser;
+    $("jobs-summary").textContent = "共 " + info.total + " 条 · 第 " + info.page + " / " + info.pages + " 页 · 每页 " + info.page_size + " 条";
+  }
+
+  async function loadJobs(showLoading) {
+    const request = ++jobsRequest;
+    jobsLoading = true;
+    $("jobs-prev").disabled = true;
+    $("jobs-next").disabled = true;
+    $("jobs-history").setAttribute("aria-busy", "true");
+    if (showLoading || request === 1) {
+      const message = document.createElement("p");
+      message.className = "empty";
+      message.textContent = "正在加载历史记录……";
+      $("jobs-history").replaceChildren(message);
+      $("jobs-summary").textContent = "正在加载……";
+    }
+    const params = new URLSearchParams({page: String(jobsPage)});
+    if (jobsUser) params.set("user_id", jobsUser);
+    try {
+      const result = await api("api/jobs?" + params);
+      if (request !== jobsRequest) return;
+      if (result.response.status === 401) { location.href = "login"; return; }
+      if (!result.response.ok) throw new Error(result.data.detail || "加载失败，请刷新后重试。");
+      showBanner("");
+      fillJobs(result.data);
+    } catch (err) {
+      if (request === jobsRequest) {
+        showBanner(err.message || "无法连接服务器，请稍后刷新。");
+        $("jobs-summary").textContent = "加载失败，请点击刷新重试。";
+      }
+    } finally {
+      if (request === jobsRequest) {
+        jobsLoading = false;
+        $("jobs-history").setAttribute("aria-busy", "false");
+        $("jobs-prev").disabled = jobsPage <= 1;
+        $("jobs-next").disabled = jobsPage >= jobsPages;
+      }
+    }
+  }
+
+  function bindJobs() {
+    $("job-user").addEventListener("change", function () {
+      jobsUser = this.value;
+      jobsPage = 1;
+      loadJobs(true);
+    });
+    $("jobs-prev").addEventListener("click", function () {
+      if (!jobsLoading && jobsPage > 1) { jobsPage--; loadJobs(true); }
+    });
+    $("jobs-next").addEventListener("click", function () {
+      if (!jobsLoading && jobsPage < jobsPages) { jobsPage++; loadJobs(true); }
+    });
+  }
+
+  function bindMobileNavigation() {
+    const aside = document.querySelector(".shell > aside");
+    if (!aside) return;
+    const nav = aside.querySelector("nav");
+    const logout = $("logout");
+    const mobile = window.matchMedia("(max-width: 720px)");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.id = "menu-toggle";
+    toggle.className = "ghost menu-toggle";
+    toggle.textContent = "☰ 菜单";
+    toggle.setAttribute("aria-label", "展开导航");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", "admin-navigation");
+    aside.appendChild(toggle);
+    const drawer = document.createElement("dialog");
+    drawer.id = "admin-navigation";
+    drawer.className = "admin-menu";
+    drawer.setAttribute("aria-labelledby", "admin-navigation-title");
+    const head = document.createElement("div");
+    head.className = "admin-menu-head";
+    const title = document.createElement("h2");
+    title.id = "admin-navigation-title";
+    title.textContent = "后台导航";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "ghost";
+    close.textContent = "✕";
+    close.setAttribute("aria-label", "关闭导航");
+    head.append(title, close);
+    const body = document.createElement("div");
+    body.className = "admin-menu-body";
+    drawer.append(head, body);
+    document.body.appendChild(drawer);
+    let ownsHistory = false;
+    let pendingNavigation = null;
+    toggle.addEventListener("click", function () {
+      if (!mobile.matches || drawer.open) return;
+      body.append(nav, logout);
+      drawer.showModal();
+      toggle.setAttribute("aria-expanded", "true");
+      document.body.classList.add("navigation-open");
+      try {
+        history.pushState(Object.assign({}, history.state, {adminMenuOpen: true}), "");
+        ownsHistory = true;
+      } catch (err) { ownsHistory = false; }
+    });
+    close.addEventListener("click", function () { drawer.close(); });
+    drawer.addEventListener("click", function (event) {
+      const bounds = drawer.getBoundingClientRect();
+      if (event.target === drawer && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) drawer.close();
+    });
+    drawer.addEventListener("close", function () {
+      aside.insertBefore(nav, toggle);
+      aside.insertBefore(logout, toggle);
+      toggle.setAttribute("aria-expanded", "false");
+      document.body.classList.remove("navigation-open");
+      if (ownsHistory && history.state && history.state.adminMenuOpen) {
+        ownsHistory = false;
+        history.back();
+      } else if (pendingNavigation) {
+        const url = pendingNavigation; pendingNavigation = null;
+        location.assign(url);
+      }
+    });
+    window.addEventListener("popstate", function () {
+      ownsHistory = false;
+      if (drawer.open) drawer.close();
+      if (pendingNavigation) {
+        const url = pendingNavigation; pendingNavigation = null;
+        location.assign(url);
+      }
+    });
+    nav.addEventListener("click", function (event) {
+      const link = event.target.closest("a");
+      if (!drawer.open || !link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
+      event.preventDefault();
+      pendingNavigation = link.href;
+      drawer.close();
+    });
+    mobile.addEventListener("change", function () { if (!mobile.matches && drawer.open) drawer.close(); });
   }
 
   let invitationRows = [];
@@ -387,8 +526,7 @@
       const data = await loadJson("api/users");
       if (data) $("users").replaceChildren(table(userColumns, data.users || [], "还没有教师"));
     } else if (page === "jobs") {
-      const data = await loadJson("api/jobs");
-      if (data) fillJobs(data);
+      await loadJobs();
     } else if (page === "invites") {
       await loadInvitations();
     }
@@ -419,6 +557,9 @@
     return;
   }
 
+  bindMobileNavigation();
+  if (page === "jobs") bindJobs();
+
   const logout = $("logout");
   if (logout) {
     logout.addEventListener("click", async function () {
@@ -435,7 +576,7 @@
     load().catch(function () { showBanner("无法连接服务器，请稍后刷新。"); });
     if (page === "overview" || page === "jobs") {
       window.setInterval(function () {
-        if (!document.hidden) load();
+        if (!document.hidden && !(page === "jobs" && jobsLoading)) load().catch(function () { showBanner("无法连接服务器，请稍后刷新。"); });
       }, 20000);
     }
   }
