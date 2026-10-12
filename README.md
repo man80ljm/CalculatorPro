@@ -125,7 +125,7 @@ pyinstaller --onedir -w --clean --noconfirm --icon=calculator.ico --add-data "ca
 
 运维后台在 `/admin`（`/admin/` 同样可用），管理员认证独立于教师 `users` 表。支持只读统计和邀请码新增、次数调整、启停与删除。未设置 `ADMIN_PASSWORD` 或 `ADMIN_PASSWORD_HASH` 时，登录和数据接口返回 503。环境变量、Cookie 和 nginx 示例见 `docs/admin.md`。
 
-正式注册必须填写有效的 6 位字母数字邀请码。注册成功会扣减来源码额度，并自动生成用户自己的专属码（默认可注册 5 人，可通过 `INVITE_USER_DEFAULT_USES` 调整默认值，管理员也可逐个调整）。失败不扣次，额度耗尽、停用或删除的码不能注册。已有账号继续登录，首次加载个人信息时补发个人码。后台 `/admin/invites` 管理邀请码，上线后应先由管理员创建首批码。详见 [邀请码注册说明](docs/admin.md#邀请码与正式注册)。
+正式注册必须填写有效的 6 位字母数字邀请码。注册成功会扣减来源码额度，并自动生成用户自己的专属码（默认可注册 5 人，可通过 `INVITE_USER_DEFAULT_USES` 调整默认值，管理员也可逐个调整）。失败不扣次，额度耗尽、停用或删除的码不能注册。已有账号继续登录，首次加载个人信息时补发个人码。后台 `/admin/invites` 管理邀请码，上线后应先由管理员创建首批码。详见 [邀请码注册说明](docs/admin.md#邀请码与正式注册)。 已于北京时间 2026-10-12 部署，后台入口 [邀请码管理](https://calc.geekhuang.com/admin/invites)，验收及回退见 [上线记录](docs/invitations-deploy-20261012.md)。
 
 ### 用 Docker 运行
 
