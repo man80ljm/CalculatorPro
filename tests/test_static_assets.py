@@ -27,7 +27,10 @@ def test_authenticated_html_and_static_assets_revalidate(client):
     page = client.get("/")
     assert page.headers["cache-control"] == "no-store"
     urls = re.findall(r'/static/[^" ]+\?v=[0-9a-f]+', page.text)
-    assert len(urls) == 3
+    assert len(urls) == 4
+    lesson_url = next(url for url in urls if "/lesson_plans.js?" in url)
+    lesson_script = client.get(lesson_url)
+    assert lesson_script.status_code == 200 and lesson_script.headers["cache-control"] == "no-cache"
     script_url = next(url for url in urls if "/app.js?" in url)
     script = client.get(script_url)
     assert script.status_code == 200

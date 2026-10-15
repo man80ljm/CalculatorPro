@@ -469,7 +469,8 @@ def attach(application) -> None:
             register = _as_upload(form.get("register"))
             syllabus_bytes = await _bytes(syllabus, required=True)
             register_bytes = await _bytes(register, required=False) if register else None
-            draft = extract_draft(
+            draft = await asyncio.to_thread(
+                extract_draft,
                 syllabus.filename or "syllabus.docx",
                 syllabus_bytes,
                 register.filename if register else None,
@@ -549,6 +550,8 @@ def attach(application) -> None:
             )
             db.add(course)
             db.flush()
+            from web_app.syllabus.jobs import bind_to_course
+            bind_to_course(db, user_id, course, body, settings)
             assign_course_settings(course, settings)
             from web_app.course_versions import freeze_existing_terms
             freeze_existing_terms(db, course)
@@ -577,6 +580,8 @@ def attach(application) -> None:
         from web_app.course_versions import new_syllabus_version
         with session_scope() as db:
             course = _owned_course(db, user_id, course_id)
+            from web_app.syllabus.jobs import bind_to_course
+            bind_to_course(db, user_id, course, body, settings)
             new_syllabus_version(db, course, settings, expected_version=body.get("expected_version"))
             course.updated_at = utcnow()
             return JSONResponse(_course_dict(db, course))

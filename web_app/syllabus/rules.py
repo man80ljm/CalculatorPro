@@ -479,4 +479,9 @@ def settings_from_wizard(body: dict) -> tuple[dict, dict]:
         "report_style": "专业",
         "word_limit": 200,
     }
+    if "teaching_calendar" in body:
+        from web_app.teaching_calendar.source import normalize_calendar_data
+        calendar = normalize_calendar_data(body["teaching_calendar"])
+        if calendar is not None:
+            settings["teaching_calendar"] = calendar
     return settings, {"course_name": course_name}

@@ -1,10 +1,11 @@
 """测试默认走本机 sqlite，避免误连部署用的 Postgres。"""
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
 
-_root = Path("/tmp/calculatorpro-pytest-bootstrap")
+_root = Path(tempfile.gettempdir()) / "calculatorpro-pytest-bootstrap"
 _root.mkdir(parents=True, exist_ok=True)
 # 导入期会建一次库。清掉旧文件，避免停在 v2 之前的表结构上。
 _bootstrap_db = _root / "bootstrap.db"

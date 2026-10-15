@@ -157,6 +157,11 @@ def assign_course_settings(course: Course, settings: dict, *, term: Term | None 
     from web_app.course_versions import curriculum, SNAPSHOT, VERSION, VERSION_ID
     latest = parse_settings(course.settings_json)
     stored = curriculum(settings)
+    # 课次来自大纲，只能通过新大纲版本替换；普通设置保存和旧页面不能把它清掉。
+    from web_app.course_versions import term_curriculum
+    previous = term_curriculum(latest, term)
+    if "teaching_calendar" in previous:
+        stored["teaching_calendar"] = previous["teaching_calendar"]
     number, version_id = latest.get(VERSION, 1), latest.get(VERSION_ID)
     if term is not None:
         blob = parse_settings(term.settings_json)

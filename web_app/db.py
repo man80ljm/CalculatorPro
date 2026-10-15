@@ -370,9 +370,152 @@ class ScheduleRecord(Base):
     payload: Mapped[str] = mapped_column(Text)
 
 
+class ScheduleDeletion(Base):
+    """Recoverable timetable removals; active tables retain their existing schema."""
+    __tablename__ = "schedule_deletions"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(20))
+    label: Mapped[str] = mapped_column(String(255))
+    snapshot_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
 class ScheduleRecognitionChunk(Base):
     __tablename__ = "schedule_recognition_chunks"
     cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
     payload: Mapped[str] = mapped_column(Text)
     usage: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LessonPlanSource(Base):
+    __tablename__ = "lesson_plan_sources"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(255))
+    digest: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LessonPlan(Base):
+    __tablename__ = "lesson_plans"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=True, index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("lesson_plan_sources.id", ondelete="CASCADE"))
+    context_json: Mapped[str] = mapped_column(Text, default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    pages_json: Mapped[str] = mapped_column(Text, default="{}")
+    checked_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_path: Mapped[str] = mapped_column(String(255), default="")
+    output_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_date: Mapped[str] = mapped_column(String(20), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class LessonPlanTask(Base):
+    __tablename__ = "lesson_plan_tasks"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("lesson_plans.id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    lesson: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    input_revision: Mapped[int] = mapped_column(Integer)
+    checkpoint_json: Mapped[str] = mapped_column(Text, default="{}")
+    public_json: Mapped[str] = mapped_column(Text, default="{}")
+    claim_token: Mapped[str] = mapped_column(String(32), default="")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TeachingAssignmentSelection(Base):
+    """Calendar/lesson-plan teacher selection; never changes grade-register metadata."""
+    __tablename__ = "teaching_assignment_selections"
+    __table_args__ = (UniqueConstraint("user_id", "course_key", "term_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_key: Mapped[str] = mapped_column(String(64))
+    term_id: Mapped[str] = mapped_column(String(20))
+    teacher: Mapped[str] = mapped_column(String(160))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TeachingMetadataOverride(Base):
+    """User-confirmed teaching metadata, isolated from timetable imports and grades."""
+    __tablename__ = "teaching_metadata_overrides"
+    __table_args__ = (UniqueConstraint("user_id", "scope_key", "term_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=True, index=True)
+    plan_id: Mapped[str | None] = mapped_column(ForeignKey("lesson_plans.id", ondelete="CASCADE"), nullable=True)
+    scope_key: Mapped[str] = mapped_column(String(64))
+    term_id: Mapped[str] = mapped_column(String(20))
+    fields_json: Mapped[str] = mapped_column(Text, default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class SyllabusImportTask(Base):
+    """Durable syllabus repair jobs; existing report tasks are unaffected."""
+    __tablename__ = "syllabus_import_tasks"
+    expected_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("lesson_plan_sources.id", ondelete="SET NULL"), nullable=True)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    digest: Mapped[str] = mapped_column(String(64))
+    input_path: Mapped[str] = mapped_column(String(255), default="")
+    allow_completion: Mapped[int] = mapped_column(Integer, default=1)
+    active_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    result_json: Mapped[str] = mapped_column(Text, default="{}")
+    public_json: Mapped[str] = mapped_column(Text, default="{}")
+    claim_token: Mapped[str] = mapped_column(String(32), default="")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TeacherImport(Base):
+    __tablename__ = "teacher_imports"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(200))
+    digest: Mapped[str] = mapped_column(String(64), unique=True)
+    source_date: Mapped[str] = mapped_column(String(20), default="")
+    payload: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="preview")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    base_revision: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TeacherProfile(Base):
+    """Staff directory metadata, separate from teacher login accounts and grades."""
+    __tablename__ = "teacher_profiles"
+    __table_args__ = (CheckConstraint("active IN (0, 1)", name="ck_teacher_profile_active"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    name_key: Mapped[str] = mapped_column(String(160), index=True)
+    college: Mapped[str] = mapped_column(String(160), default="", index=True)
+    department: Mapped[str] = mapped_column(String(160), default="", index=True)
+    teaching_unit: Mapped[str] = mapped_column(String(160), default="", index=True)
+    group_name: Mapped[str] = mapped_column(String(160), default="")
+    mobile: Mapped[str] = mapped_column(String(60), default="")
+    office_phone: Mapped[str] = mapped_column(String(100), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    source_import_id: Mapped[str | None] = mapped_column(ForeignKey("teacher_imports.id"), nullable=True)
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_group: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

@@ -532,6 +532,9 @@ function collectSettings() {
       strength: row.strength || "",
     })),
     course_description: state.courseDescription,
+    ...(state.teachingCalendar ? { teaching_calendar: state.teachingCalendar } : {}),
+    ...(state.teachingOutline ? { teaching_outline: state.teachingOutline } : {}),
+    ...(state.syllabusCompletion ? { syllabus_completion: state.syllabusCompletion } : {}),
     objective_requirements: state.objectiveRequirements.slice(0, state.objectivesCount),
     spread_mode: state.spreadMode,
     distribution: state.distribution,
@@ -609,6 +612,9 @@ function applyServerSettings(settings) {
   fillBag(state.courseOpen, data.course_open_info);
   fillBag(state.courseBasic, data.course_basic_info);
   state.courseDescription = fieldText(data.course_description);
+  state.teachingCalendar = data.teaching_calendar || null;
+  state.teachingOutline = data.teaching_outline || null;
+  state.syllabusCompletion = data.syllabus_completion || null;
   state.spreadMode = data.spread_mode || state.spreadMode;
   state.distribution = data.distribution || state.distribution;
   state.reportStyle = data.report_style || state.reportStyle;
@@ -676,6 +682,308 @@ function validateBeforeRun(needsFile) {
 }
 
 let actionBusy = false;
+let calendarGenerating = false;
+let calendarDownloadUrl = null;
+
+function calendarError(message = "") {
+  const node = document.getElementById("calendarError");
+  node.textContent = message;
+  node.hidden = !message;
+}
+
+function clearCalendarDownload() {
+  if (calendarDownloadUrl) URL.revokeObjectURL(calendarDownloadUrl);
+  calendarDownloadUrl = null;
+  const link = document.getElementById("calendarDownload");
+  link.hidden = true;
+  link.removeAttribute("href");
+  link.removeAttribute("download");
+}
+
+function setCalendarProgress(percent, message) {
+  const bar = document.getElementById("calendarProgress");
+  const value = Math.max(Number(bar.value) || 0, Math.min(100, Number(percent) || 0));
+  bar.value = value;
+  document.getElementById("calendarPercent").textContent = `${value}%`;
+  document.getElementById("calendarStage").textContent = message;
+  const limits = [0, 35, 65, 95];
+  limits.forEach((limit, index) => {
+    const node = document.getElementById(`calendarStep${index}`);
+    const done = value === 100 || (index < 3 && value >= limits[index + 1]);
+    const active = !done && value >= limit;
+    node.dataset.state = done ? "done" : active ? "active" : "pending";
+    if (active) node.setAttribute("aria-current", "step");
+    else node.removeAttribute("aria-current");
+  });
+}
+
+async function receiveCalendarFile(response, selectedCourse) {
+  let file = null;
+  let received = 0;
+  let complete = false;
+  const parts = [];
+  const decoder = new TextDecoder();
+  let pending = "";
+  const accept = (line) => {
+    if (!line.trim()) return;
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新生成教学日历。");
+    if (sessionStopped) throw new Error("未登录");
+    let event;
+    try { event = JSON.parse(line); } catch (err) { throw new Error("生成结果无法读取，请重新生成。"); }
+    if (!event || typeof event !== "object") throw new Error("生成结果无法读取，请重新生成。");
+    if (event.type === "progress") {
+      if (!Number.isFinite(event.percent) || typeof event.message !== "string") throw new Error("进度信息无法读取，请重新生成。");
+      setCalendarProgress(Math.max(0, Math.min(95, event.percent)), event.message);
+    } else if (event.type === "file") {
+      if (file || !Number.isSafeInteger(event.size) || event.size <= 0 || event.size > 32 * 1024 * 1024 ||
+          typeof event.filename !== "string" || !/\.xls$/i.test(event.filename)) throw new Error("文件信息无法读取，请重新生成。");
+      file = event;
+      setCalendarProgress(95, "文件已生成，正在接收下载文件…");
+    } else if (event.type === "chunk") {
+      if (!file || complete || typeof event.data !== "string" || event.data.length > 90000) throw new Error("下载文件内容不完整，请重新生成。");
+      let bytes;
+      try { bytes = Uint8Array.from(atob(event.data), (char) => char.charCodeAt(0)); }
+      catch (err) { throw new Error("下载文件内容无法读取，请重新生成。"); }
+      received += bytes.length;
+      if (received > file.size) throw new Error("下载文件大小不正确，请重新生成。");
+      parts.push(bytes);
+      setCalendarProgress(95 + Math.min(4, Math.floor(received / file.size * 4)), "正在接收下载文件…");
+    } else if (event.type === "complete") {
+      if (!file || complete || received !== file.size) throw new Error("下载文件内容不完整，请重新生成。");
+      complete = true;
+    } else if (event.type === "error") {
+      throw new Error(event.message || "教学日历生成失败，请重试。");
+    } else if (event.type !== "heartbeat") {
+      throw new Error("生成结果无法读取，请重新生成。");
+    }
+  };
+  const append = (chunk) => {
+    pending += chunk;
+    const lines = pending.split("\n");
+    pending = lines.pop();
+    lines.forEach(accept);
+    if (pending.length > 1024 * 1024) throw new Error("生成结果无法读取，请重新生成。");
+  };
+  if (response.body && response.body.getReader) {
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        append(decoder.decode(value, { stream: true }));
+      }
+      append(decoder.decode());
+    } catch (err) {
+      await reader.cancel().catch(() => {});
+      throw err;
+    } finally {
+      reader.releaseLock();
+    }
+  } else {
+    append(await response.text());
+  }
+  if (pending.trim()) accept(pending);
+  if (!complete) throw new Error("生成连接已中断，文件尚未接收完整，请重新生成。");
+  return { blob: new Blob(parts, { type: "application/vnd.ms-excel" }), filename: file.filename, summary: file.summary || {} };
+}
+
+let calendarTeachingAssignment = null;
+let calendarCourseAssignment = null;
+let calendarAssignmentCourse = null;
+function showCalendarCourseChoice(assignment, selectedCourse) {
+  calendarCourseAssignment = assignment; calendarAssignmentCourse = selectedCourse;
+  const select = document.getElementById("calendarCourseChoice");
+  select.replaceChildren();
+  const empty = document.createElement("option"); empty.value = ""; empty.textContent = "请选择对应的课表课程"; select.append(empty);
+  assignment.course_matches.forEach((name) => {
+    const option = document.createElement("option"); option.value = name; option.textContent = name; select.append(option);
+  });
+  select.value = "";
+  document.getElementById("calendarChooseCourse").disabled = true;
+  document.getElementById("calendarCourseMatch").hidden = false;
+}
+async function chooseCalendarCourse() {
+  const assignment = calendarCourseAssignment, selectedCourse = calendarAssignmentCourse;
+  const courseName = document.getElementById("calendarCourseChoice").value;
+  if (!assignment || !courseName || calendarGenerating || sessionStopped) return;
+  const button = document.getElementById("calendarChooseCourse"); button.disabled = true;
+  try {
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新点击教学日历。");
+    const response = await api(`/api/courses/${selectedCourse}/teaching-metadata`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "course_match", course_name: courseName,
+        revision: assignment.override_revision, year_start: assignment.year_start,
+        year_end: assignment.year_end, semester: assignment.semester }),
+    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新点击教学日历。");
+    const matched = await response.json();
+    document.getElementById("calendarCourseMatch").hidden = true;
+    if (matched.status === "selection_required") {
+      showCalendarTeacherChoice(matched, selectedCourse);
+      document.getElementById("calendarStage").textContent = "请选择本学期的任课教师";
+      document.getElementById("calendarDialogError").hidden = true;
+    } else {
+      await downloadTeachingCalendar();
+    }
+  } catch (err) {
+    const error = document.getElementById("calendarDialogError");
+    error.hidden = false; error.textContent = err.message || "课程对应关系保存失败，请重试。";
+    button.disabled = false;
+  }
+}
+function showCalendarTeacherChoice(assignment, selectedCourse) {
+  calendarTeachingAssignment = assignment; calendarAssignmentCourse = selectedCourse;
+  const select = document.getElementById("calendarTeacherChoice");
+  select.replaceChildren();
+  const empty = document.createElement("option"); empty.value = ""; empty.textContent = "请选择本学期的任课教师"; select.append(empty);
+  assignment.options.forEach((item) => {
+    const option = document.createElement("option"); option.value = item.teacher;
+    option.textContent = `${item.teacher}（${item.classes.join("、")}）`; select.append(option);
+  });
+  select.value = "";
+  document.getElementById("calendarChooseTeacher").disabled = true;
+  document.getElementById("calendarAssignment").hidden = false;
+}
+async function chooseCalendarTeacher() {
+  const assignment = calendarTeachingAssignment, selectedCourse = calendarAssignmentCourse;
+  const teacher = document.getElementById("calendarTeacherChoice").value;
+  if (!assignment || !teacher || calendarGenerating || sessionStopped) return;
+  const button = document.getElementById("calendarChooseTeacher"); button.disabled = true;
+  try {
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新点击教学日历。");
+    const response = await api(`/api/courses/${selectedCourse}/teaching-assignment`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teacher, year_start: assignment.year_start, year_end: assignment.year_end, semester: assignment.semester }) });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新点击教学日历。");
+    document.getElementById("calendarAssignment").hidden = true;
+    await downloadTeachingCalendar();
+  } catch (err) {
+    const error = document.getElementById("calendarDialogError"); error.hidden = false; error.textContent = err.message || "任课教师选择未保存，请重试。";
+    button.disabled = false;
+  }
+}
+async function downloadTeachingCalendar(skipCourseMatch = false) {
+  if (calendarGenerating) return;
+  if (!courseId) {
+    calendarError("请先从大纲建课，或选择已有课程。");
+    return;
+  }
+  const selectedCourse = courseId;
+  const button = document.getElementById("calendarBtn");
+  const dlg = document.getElementById("dlgCalendar");
+  const error = document.getElementById("calendarDialogError");
+  const retry = document.getElementById("calendarRetry");
+  const link = document.getElementById("calendarDownload");
+  const closeButtons = dlg.querySelectorAll("[data-close]");
+  const controller = new AbortController();
+  const started = Date.now();
+  let timedOut = false;
+  const elapsed = () => {
+    const seconds = Math.floor((Date.now() - started) / 1000);
+    document.getElementById("calendarElapsed").textContent = `已等待 ${seconds} 秒`;
+  };
+  const ticker = setInterval(elapsed, 1000);
+  const deadline = setTimeout(() => { timedOut = true; controller.abort(); }, 180000);
+  clearCalendarDownload();
+  document.getElementById("calendarAssignment").hidden = true;
+  document.getElementById("calendarCourseMatch").hidden = true;
+  calendarGenerating = true;
+  dlg.dataset.busy = "1";
+  closeButtons.forEach((node) => { node.disabled = true; });
+  button.textContent = "生成中…";
+  button.setAttribute("aria-busy", "true");
+  document.getElementById("calendarProgress").value = 0;
+  error.hidden = true;
+  error.textContent = "";
+  retry.hidden = true;
+  document.getElementById("calendarFileName").hidden = true;
+  document.getElementById("calendarDownloadHint").hidden = true;
+  document.getElementById("calendarProgressHint").hidden = false;
+  setCalendarProgress(0, "正在保存课程资料…");
+  elapsed();
+  syncIdleActions();
+  calendarError();
+  if (!dlg.open) openDialog("dlgCalendar");
+  try {
+    await flushSave();
+    if (controller.signal.aborted) throw new Error("生成等待超时，请稍后重试。");
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新点击教学日历。");
+    setCalendarProgress(5, "正在提交教学日历生成请求…");
+    const url = `/api/courses/${selectedCourse}/teaching-calendar?progress=1` + (skipCourseMatch === true ? "&skip_course_match=1" : "");
+    const response = await api(url, { method: "POST", signal: controller.signal });
+    if (response.status === 409) {
+      const problem = await response.clone().json().catch(() => null);
+      if (problem?.code === "teaching_course_match_required" && problem.teaching_assignment) {
+        showCalendarCourseChoice(problem.teaching_assignment, selectedCourse);
+        const issue = new Error(problem.message || problem.detail || problem.teaching_assignment.message);
+        issue.needsCourseMatch = true; throw issue;
+      }
+      if (problem?.code === "teaching_assignment_required" && problem.teaching_assignment) {
+        showCalendarTeacherChoice(problem.teaching_assignment, selectedCourse);
+        const issue = new Error(problem.message || problem.detail || problem.teaching_assignment.message);
+        issue.needsTeacher = true; throw issue;
+      }
+    }
+    if (!response.ok) throw new Error(await errorMessage(response));
+    let file;
+    if ((response.headers.get("Content-Type") || "").includes("application/x-ndjson")) {
+      file = await receiveCalendarFile(response, selectedCourse);
+    } else {
+      // 更新过渡期兼容原有下载响应，仍在完整接收文件后才显示 100%。
+      setCalendarProgress(95, "文件已生成，正在接收下载文件…");
+      file = { blob: await response.blob(),
+        filename: filenameFromDisposition(response.headers.get("Content-Disposition"), "教学日历.xls"),
+        summary: { hours_match: response.headers.get("X-Calendar-Hours-Match") !== "false",
+          total_hours: response.headers.get("X-Calendar-Total-Hours"),
+          template_total_hours: response.headers.get("X-Calendar-Course-Hours") } };
+    }
+    if (controller.signal.aborted) throw new Error("生成等待超时，请稍后重试。");
+    if (courseId !== selectedCourse) throw new Error("课程已切换，请重新生成教学日历。");
+    if (sessionStopped) throw new Error("未登录");
+    if (!file.blob.size) throw new Error("下载文件为空，请重新生成。");
+    calendarDownloadUrl = URL.createObjectURL(file.blob);
+    link.href = calendarDownloadUrl;
+    link.download = file.filename;
+    link.hidden = false;
+    const name = document.getElementById("calendarFileName");
+    name.textContent = file.filename;
+    name.hidden = false;
+    setCalendarProgress(100, "文件已生成");
+    document.getElementById("calendarProgressHint").hidden = true;
+    document.getElementById("calendarDownloadHint").hidden = false;
+    retry.hidden = false;
+    const summary = file.summary;
+    const warnings = [];
+    if (summary.hours_match === false) warnings.push(`学时合计 ${Number(summary.total_hours)} 与课程总学时 ${Number(summary.template_total_hours)} 不一致，请核对大纲和课程信息。`);
+    if (summary.teaching_assignment && summary.teaching_assignment.status !== "ready") warnings.push(summary.teaching_assignment.message);
+    if (warnings.length) {
+      const message = warnings.join("\n"); error.textContent = message; error.hidden = false; calendarError(message);
+    }
+    // 自动下载可能被浏览器拦截；真实点击的下载链接持续可用，不立即销毁文件地址。
+    try { link.click(); } catch (err) { /* 文件仍可通过下方链接手动下载。 */ }
+  } catch (err) {
+    const message = timedOut ? "生成等待超时，请稍后重试。" : err.message === "未登录" ? "登录已失效，请重新登录后生成。" : err.message || "教学日历生成失败，请重试。";
+    document.getElementById("calendarStage").textContent = "生成未完成";
+    error.textContent = message;
+    error.hidden = false;
+    retry.hidden = sessionStopped || Boolean(err.needsTeacher || err.needsCourseMatch);
+    if (err.needsTeacher) document.getElementById("calendarStage").textContent = "请选择任课教师";
+    if (err.needsCourseMatch) document.getElementById("calendarStage").textContent = "请确认课表课程";
+    document.getElementById("calendarProgressHint").hidden = true;
+    calendarError(message);
+  } finally {
+    clearInterval(ticker);
+    clearTimeout(deadline);
+    elapsed();
+    calendarGenerating = false;
+    dlg.dataset.busy = "0";
+    closeButtons.forEach((node) => { node.disabled = false; });
+    button.textContent = "教学日历";
+    button.removeAttribute("aria-busy");
+    syncIdleActions();
+  }
+}
 
 function syncIdleActions() {
   const hasCourse = Boolean(courseId);
@@ -683,6 +991,8 @@ function syncIdleActions() {
     const node = document.getElementById(id);
     if (node) node.disabled = !hasCourse || sessionStopped;
   });
+  const calendarButton = document.getElementById("calendarBtn");
+  if (calendarButton) calendarButton.disabled = calendarGenerating || sessionStopped;
   const registerInput = document.getElementById("registerFile");
   if (registerInput) registerInput.disabled = !hasCourse || sessionStopped;
   const reportBtn = document.getElementById("reportBtn");
@@ -1044,7 +1354,7 @@ function scheduleSave() {
 
 function editTarget(node) {
   if (!node || !node.closest) return false;
-  if (node.closest("#passwordPanel, #invitePanel, #dlgWizard, #dlgConfirm, #dlgReport, #dlgRegister, #dlgImportTerm, #dlgNewCourse")) return false;
+  if (node.closest("#passwordPanel, #invitePanel, #dlgWizard, #dlgConfirm, #dlgReport, #dlgRegister, #dlgImportTerm, #dlgNewCourse, #dlgLessonPlan")) return false;
   if (node.id === "courseSelect" || node.id === "termSelect" || node.id === "saveStatus") return false;
   if ((node.type || "") === "file") return false;
   return Boolean(node.closest("main"));
@@ -1245,6 +1555,7 @@ function applyCoursePayload(data, useSnapshot = false) {
   saveDirty = false;
   try {
   courseId = data.id;
+  if (!calendarGenerating) calendarError();
   courseRevision = data.edit_revision || data.updated_at || "";
   editBase = { name: data.name, settings: data.edit_settings || data.settings, term_id: data.current_term_id };
   localStorage.setItem(COURSE_KEY, String(courseId));
@@ -1291,6 +1602,7 @@ async function loadCourses(preferId) {
   select.innerHTML = "";
   if (!courses.length) {
     courseId = null;
+    calendarError();
     courseName = "";
     reportState = null;
     reportPending = false;
@@ -1411,6 +1723,14 @@ function bindOnce() {
       if (previous) event.target.value = String(previous);
     }
   });
+  document.getElementById("calendarBtn").addEventListener("click", () => downloadTeachingCalendar());
+  document.getElementById("calendarRetry").addEventListener("click", () => downloadTeachingCalendar());
+  document.getElementById("calendarCourseChoice").addEventListener("change", (event) => { document.getElementById("calendarChooseCourse").disabled = !event.target.value; });
+  document.getElementById("calendarChooseCourse").addEventListener("click", chooseCalendarCourse);
+  document.getElementById("calendarSkipCourseMatch").addEventListener("click", () => downloadTeachingCalendar(true));
+  document.getElementById("calendarTeacherChoice").addEventListener("change", (event) => { document.getElementById("calendarChooseTeacher").disabled = !event.target.value; });
+  document.getElementById("calendarChooseTeacher").addEventListener("click", chooseCalendarTeacher);
+  window.addEventListener("pagehide", (event) => { if (!event.persisted) clearCalendarDownload(); });
   document.getElementById("newCourseBtn").addEventListener("click", () => {
     document.getElementById("newCourseForm").reset();
     document.getElementById("newCourseError").hidden = true;
@@ -1590,7 +1910,6 @@ async function loadMe() {
       return;
     }
     const data = await response.json();
-    document.getElementById("who").textContent = data.username || "";
     currentUserId = data.id;
     const invitation = data.invitation;
     const labels = { active: "可使用", exhausted: "次数已用完", disabled: "已停用", deleted: "已删除" };
@@ -2322,6 +2641,7 @@ function renderWizardFields() {
     area.value = item.value;
     area.addEventListener("input", () => { wizard.objectives[index] = area.value; });
     const box = el("label", { class: item.status === "需手填" ? "field need-fill" : "field", text: `课程目标${index + 1}` }, [area]);
+    if (wizard.completion?.inferred_fields?.includes(`objectives.${index}`)) box.append(el("span", { class: "hint", text: "AI 纠错与补全，可修改" }));
     appendFieldNotes(box, item);
     objectives.append(box);
   });
@@ -2384,7 +2704,8 @@ function renderWizardRelation() {
     ? "关系表已通过程序校验。"
     : (errors.join("；") || "关系表未通过校验。");
   message.classList.toggle("bad", !(wizard.relation && wizard.relation.ok));
-  document.getElementById("wizardCreate").disabled = !(wizard.relation && wizard.relation.ok);
+  document.getElementById("wizardCreate").disabled = !(wizard.relation && wizard.relation.ok && wizard.completion.ok);
+  if (!wizard.completion.ok && wizard.completion.errors?.length) message.textContent += "；" + wizard.completion.errors.join("；");
 }
 
 function gradSide(raw) {
@@ -2397,6 +2718,9 @@ function showWizardDraft(draft) {
   const fields = draft.fields || {};
   wizard = {
     fields,
+    teachingCalendar: draft.teaching_calendar || null,
+    completionJobId: draft.completion_job_id || null,
+    completion: draft.completion || { ok: true, errors: [], changes: [], warnings: [], inferred_fields: [] },
     groups: draft.groups || {
       course: ["course_type", "course_name", "credits", "hours", "course_code", "college"],
       term: ["school_year_term", "year_start", "year_end", "semester", "teacher", "major", "class_name", "student_count", "exam_count"],
@@ -2421,11 +2745,32 @@ function showWizardDraft(draft) {
   };
   document.getElementById("wizardUpload").hidden = true;
   document.getElementById("wizardConfirm").hidden = false;
+  const calendarNotice = document.getElementById("wizardCalendarNotice");
+  const calendarWarnings = (wizard.teachingCalendar && wizard.teachingCalendar.warnings) || [];
+  calendarNotice.textContent = calendarWarnings.join(" ");
+  calendarNotice.hidden = !calendarWarnings.length;
+  const completionNotice = document.getElementById("wizardCompletionNotice");
+  completionNotice.replaceChildren();
+  const changes = wizard.completion.changes || [], warnings = wizard.completion.warnings || [];
+  if (changes.length) {
+    completionNotice.append(el("p", { text: "本次识别与补全：" }));
+    const list = el("ul"); changes.forEach((text) => list.append(el("li", { text }))); completionNotice.append(list);
+  }
+  warnings.forEach((text) => completionNotice.append(el("p", { class: "form-error", text })));
+  completionNotice.hidden = !changes.length && !warnings.length;
   renderWizardFields();
 }
 
 function resetWizard() {
+  syllabusWatch++;
   wizard = null;
+  document.getElementById("wizardSavedRead").hidden = !courseId;
+  document.getElementById("syllabusReadBtn").disabled = false;
+  document.getElementById("wizardSavedRead").disabled = false;
+  try { syllabusJobId = sessionStorage.getItem("calculatorpro.syllabusJob") || ""; } catch (_) {}
+  document.getElementById("wizardResume").hidden = !syllabusJobId;
+  document.getElementById("wizardCompletionNotice").hidden = true;
+  document.getElementById("wizardCalendarNotice").hidden = true;
   document.getElementById("wizardUpload").hidden = false;
   document.getElementById("wizardConfirm").hidden = true;
   document.getElementById("wizardCreate").disabled = true;
@@ -2483,40 +2828,115 @@ document.getElementById("syllabusBtn").addEventListener("click", () => {
   openDialog("dlgWizard");
 });
 
-document.getElementById("syllabusReadBtn").addEventListener("click", async () => {
-  const file = document.getElementById("syllabusFile").files[0];
-  if (!file) {
-    document.getElementById("wizardError").textContent = "请先选择教学大纲。";
-    return;
-  }
-  const body = new FormData();
-  body.append("syllabus", file);
-  const wait = document.getElementById("wizardWait");
-  const error = document.getElementById("wizardError");
-  wait.hidden = false;
-  error.textContent = "";
-  document.getElementById("syllabusReadBtn").disabled = true;
+let syllabusWatch = 0;
+let syllabusJobId = "";
+function rememberSyllabusJob(identity) {
+  syllabusJobId = identity || "";
   try {
-    const response = await api("/api/syllabus/extract", { method: "POST", body });
-    if (!response.ok) {
-      error.textContent = await errorMessage(response);
-      return;
+    if (identity) sessionStorage.setItem("calculatorpro.syllabusJob", identity);
+    else sessionStorage.removeItem("calculatorpro.syllabusJob");
+  } catch (_) { /* Progress remains usable when browser storage is unavailable. */ }
+}
+async function showSyllabusJob(identity, { sourceFile = null, sourceCourseId = null, expectedVersion = null, watchToken = null } = {}) {
+  const token = watchToken ?? ++syllabusWatch, started = Date.now();
+  const wait = document.getElementById("wizardWait");
+  const stage = document.getElementById("wizardReadStage");
+  wait.hidden = false;
+  document.getElementById("syllabusReadBtn").disabled = true;
+  document.getElementById("wizardSavedRead").disabled = true;
+  try {
+    while (token === syllabusWatch) {
+      let response;
+      try { response = await api("/api/syllabus/imports/" + identity); }
+      catch (err) {
+        if (err.message === "未登录") throw err;
+        stage.textContent = "暂时无法连接，正在重新查询；后台任务继续处理…";
+        await delay(2500); continue;
+      }
+      if (token !== syllabusWatch) return;
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const job = await response.json();
+      stage.textContent = job.stage_label || "正在处理…";
+      document.getElementById("wizardReadProgress").value = job.percent || 0;
+      document.getElementById("wizardReadCounts").textContent = (job.percent || 0) + "% · 已请求 " + (job.api_calls || 0) + " 次 API · 已等待 " + Math.floor((Date.now() - started)/1000) + " 秒";
+      if (job.status === "fail") throw new Error(job.error || "读取大纲失败。");
+      if (job.status === "success") {
+        if (!job.draft) throw new Error("未找到大纲草稿，请重新读取。");
+        showWizardDraft(job.draft);
+        wizard.sourceFile = sourceFile;
+        wizard.sourceCourseId = sourceCourseId || job.draft.source_course_id || null;
+        wizard.expectedVersion = expectedVersion || job.draft.expected_version || null;
+        return;
+      }
+      await delay(1500);
     }
-    showWizardDraft(await response.json());
+  } finally {
+    if (token === syllabusWatch) {
+      wait.hidden = true;
+      document.getElementById("syllabusReadBtn").disabled = false;
+      document.getElementById("wizardSavedRead").disabled = false;
+    }
+  }
+}
+async function startSyllabusRead(file, savedCourse = null) {
+  const opening = ++syllabusWatch;
+  const error = document.getElementById("wizardError"); error.textContent = "";
+  let options;
+  if (savedCourse) {
+    await flushSave();
+    options = {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({course_id:savedCourse,allow_completion:document.getElementById("syllabusAllowCompletion").checked})};
+  } else {
+    if (!file || !/\.(docx|pdf)$/i.test(file.name)) throw new Error("请选择 .docx 大纲或带文字的 PDF。");
+    if (file.size > 5 * 1024 * 1024) throw new Error("教学大纲不能超过 5MB。");
+    const body = new FormData(); body.append("syllabus",file);
+    body.append("allow_completion",String(document.getElementById("syllabusAllowCompletion").checked));
+    options = {method:"POST",body};
+  }
+  document.getElementById("syllabusReadBtn").disabled = true;
+  document.getElementById("wizardSavedRead").disabled = true;
+  document.getElementById("wizardWait").hidden = false;
+  try {
+    const response = await api("/api/syllabus/imports",options);
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const job = await response.json(); rememberSyllabusJob(job.job_id);
+    if (opening !== syllabusWatch) return;
+    await showSyllabusJob(job.job_id,{sourceFile:file,sourceCourseId:savedCourse,watchToken:opening});
   } catch (err) {
     if (err.message !== "未登录") error.textContent = err.message || "读取失败";
   } finally {
-    wait.hidden = true;
-    document.getElementById("syllabusReadBtn").disabled = false;
+    if (opening === syllabusWatch) {
+      document.getElementById("wizardWait").hidden = true;
+      document.getElementById("syllabusReadBtn").disabled = false;
+      document.getElementById("wizardSavedRead").disabled = false;
+    }
   }
+}
+document.getElementById("wizardSavedRead").addEventListener("click", async () => {
+  try { await startSyllabusRead(null,courseId); }
+  catch (err) { document.getElementById("wizardError").textContent = err.message || "读取失败"; }
+});
+document.getElementById("wizardResume").addEventListener("click", async () => {
+  try { await showSyllabusJob(syllabusJobId); }
+  catch (err) { document.getElementById("wizardError").textContent = err.message || "无法恢复读取任务。"; }
+});
+document.getElementById("wizardConfirm").addEventListener("input", () => {
+  if (!wizard?.completionJobId) return;
+  wizard.completion.ok = false;
+  document.getElementById("wizardCreate").disabled = true;
+  document.getElementById("wizardRelationMsg").textContent = "草稿已修改，请点击“重新校验”后确认。";
+});
+
+document.getElementById("syllabusReadBtn").addEventListener("click", async () => {
+  try { await startSyllabusRead(document.getElementById("syllabusFile").files[0]); }
+  catch (err) { document.getElementById("wizardError").textContent = err.message || "读取失败"; }
 });
 
 document.getElementById("wizardRecheck").addEventListener("click", async () => {
   if (!wizard) return;
-  const response = await api("/api/syllabus/validate-relation", {
+  const response = await api(wizard.completionJobId ? "/api/syllabus/validate-draft" : "/api/syllabus/validate-relation", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ relation_grid: wizard.relation.grid }),
+    body: JSON.stringify({ relation_grid: wizard.relation.grid, fields: wizard.fields, objectives: wizard.objectives, grad_req_map: wizard.grad, completion_job_id: wizard.completionJobId }),
   });
   if (!response.ok) {
     document.getElementById("wizardRelationMsg").textContent = await errorMessage(response);
@@ -2525,7 +2945,8 @@ document.getElementById("wizardRecheck").addEventListener("click", async () => {
   }
   const data = await response.json();
   wizard.relation.ok = Boolean(data.ok);
-  wizard.relation.errors = data.errors || [];
+  wizard.relation.errors = data.relation_errors || data.errors || [];
+  wizard.completion.ok = Boolean(data.ok); wizard.completion.errors = data.errors || [];
   renderWizardRelation();
 });
 
@@ -2547,15 +2968,17 @@ document.getElementById("wizardCreate").addEventListener("click", async () => {
     objectives: wizard.objectives,
     description: document.getElementById("wizardDescription").value,
     grad_req_map: wizard.grad,
+    teaching_calendar: wizard.teachingCalendar,
+    completion_job_id: wizard.completionJobId,
     relation_grid: wizard.relation.grid,
   };
   const button = document.getElementById("wizardCreate");
   button.disabled = true;
   try {
-    let response = await api("/api/courses/from-syllabus", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    let response = await api(wizard.sourceCourseId ? `/api/courses/${wizard.sourceCourseId}/syllabus-version` : "/api/courses/from-syllabus", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, ...(wizard.sourceCourseId ? { expected_version: wizard.expectedVersion } : {}) }),
     });
-    let updated = false;
+    let updated = Boolean(wizard.sourceCourseId);
     if (response.status === 409) {
       const data = await response.json();
       if (data.code !== "existing_course") throw new Error(data.detail || "建课失败");
@@ -2576,11 +2999,16 @@ document.getElementById("wizardCreate").addEventListener("click", async () => {
     const created = await response.json();
     closeDialog(document.getElementById("dlgWizard"), true);
     await loadCourses(created.id);
+    rememberSyllabusJob("");
+    if (!wizard.completionJobId && wizard.sourceFile && wizard.sourceFile.name.toLowerCase().endsWith(".docx") && window.saveLessonPlanOutline) {
+      try { await window.saveLessonPlanOutline(created.id, wizard.sourceFile); }
+      catch (err) { showResult("课程已保存，原始大纲保存失败。可在课程教案入口重新上传。", true, true); return; }
+    }
     showResult(updated ? `已保存第${created.latest_syllabus_version}版大纲，之后新导入的学期使用新版。` : "已按大纲建课。", false);
   } catch (err) {
     if (err.message !== "未登录") document.getElementById("wizardRelationMsg").textContent = err.message || "建课失败";
   } finally {
-    button.disabled = !(wizard && wizard.relation && wizard.relation.ok);
+    button.disabled = !(wizard && wizard.relation && wizard.relation.ok && wizard.completion.ok);
   }
 });
 

@@ -196,6 +196,12 @@ class _Guard:
         seen = 0
         incoming_headers = dict(scope.get("headers") or [])
         body_limit = 1024 * 1024 if b"application/json" in incoming_headers.get(b"content-type", b"") else max_request_bytes()
+        if path in {"/api/teaching-calendar/preview", "/api/teaching-calendar/generate"}:
+            # 本模块固定每个文件 5MB，不受其他模块 MAX_UPLOAD_MB 配置影响。
+            body_limit = (11 if path.endswith("/preview") else 7) * 1024 * 1024
+        if path == "/admin/api/teachers/import/preview":
+            # 5MB PDF 加上 base64 和 JSON 封装，仍由教师接口检查文件大小。
+            body_limit = 7 * 1024 * 1024
         async def receive():
             nonlocal seen
             message = await raw_receive()
@@ -204,9 +210,12 @@ class _Guard:
                 if seen > body_limit:
                     raise ServiceError("上传内容过大，请缩小文件后重试。", status=413)
             return message
+        if path == "/api/lesson-plans" or re.fullmatch(r"/api/courses/\d+/lesson-plan-outline",path):
+            body_limit = min(body_limit, 6 * 1024 * 1024)
         length = _content_length(scope)
         if length is not None and length > body_limit:
-            response = _json_error(413, f"上传内容不能超过 {max_upload_bytes() // (1024 * 1024)}MB")
+            message = "每个上传文件不能超过 5MB，预览内容不能超过 1MB。" if path.startswith("/api/teaching-calendar/") else f"上传内容不能超过 {max_upload_bytes() // (1024 * 1024)}MB"
+            response = _json_error(413, message)
             await response(scope, receive, send)
             return
         # 运维后台走独立 Cookie，不接受教师会话，也不把未登录的人送到教师登录页。
@@ -239,6 +248,9 @@ class _Guard:
                     "revision": headers.get(b"x-course-revision", b"").decode("ascii", "ignore"),
                     "checked": False, "merge": bool(match and scope.get("method") == "PATCH" and path == f"/api/courses/{match[1]}")})
             heavy = scope.get("method") == "POST" and bool(re.search(r"/(calculate|export|template|ai-report|report-jobs|grade-register|files|extract)$", path))
+            heavy = heavy or (scope.get("method") == "POST" and (path in {
+                "/api/teaching-calendar/preview", "/api/teaching-calendar/generate"} or
+                bool(re.fullmatch(r"/api/courses/\d+/teaching-calendar", path))))
             from web_app.resource_limits import admit_request, release_request
             admitted = heavy and admit_request(parsed[0])
             if heavy and not admitted:
@@ -561,10 +573,16 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_application):
         start_job_runtime()
+        from web_app.lesson_plans.jobs import start_runtime as start_lesson_runtime, stop_runtime as stop_lesson_runtime
+        start_lesson_runtime(managed=True)
+        from web_app.syllabus.jobs import start_runtime as start_syllabus_runtime, stop_runtime as stop_syllabus_runtime
+        start_syllabus_runtime(managed=True)
         try:
             yield
         finally:
             await asyncio.to_thread(stop_job_runtime)
+            await asyncio.to_thread(stop_lesson_runtime, managed=True)
+            await asyncio.to_thread(stop_syllabus_runtime, managed=True)
     application = FastAPI(title="CalculatorPro", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @application.get("/healthz")
@@ -764,6 +782,8 @@ def create_app() -> FastAPI:
                     term = create_term(db, course, settings, make_current=True, clear_identity=True)
                 if term is not None:
                     apply_term_fields(term, settings)
+                from web_app.syllabus.jobs import preserve_confirmed_outline
+                preserve_confirmed_outline(course, settings, term)
                 assign_course_settings(course, settings, term=term)
             term = current_term(db, course)
             after_settings = merge_settings(_settings_of(course), term) if term else _settings_of(course)
@@ -1086,6 +1106,16 @@ def create_app() -> FastAPI:
     attach_admin(application)
     from web_app.teaching.routes import attach_teaching
     attach_teaching(application)
+    from web_app.teaching.teacher_routes import attach_teacher_directory
+    attach_teacher_directory(application)
+    from web_app.teaching.assignment_routes import attach_assignments
+    attach_assignments(application)
+    from web_app.teaching_calendar.routes import attach_calendar
+    attach_calendar(application)
+    from web_app.lesson_plans.routes import attach_lesson_plans
+    attach_lesson_plans(application)
+    from web_app.syllabus.routes import attach_syllabus_imports
+    attach_syllabus_imports(application)
     application.mount("/static", RevalidatedStaticFiles(directory=STATIC_DIR), name="static")
     application.add_middleware(_Guard)
     application.add_middleware(AdminHostMiddleware)

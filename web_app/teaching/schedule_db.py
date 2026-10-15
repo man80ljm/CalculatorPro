@@ -17,6 +17,7 @@ class ScheduleDatabase:
         with Session(self.engine,expire_on_commit=False) as db:
             try:
                 if write and self.engine.dialect.name=='sqlite':db.execute(text('BEGIN IMMEDIATE'))
+                if write and self.engine.dialect.name=='postgresql':db.execute(text('SELECT pg_advisory_xact_lock(19710, 1)'))
                 yield db
                 db.commit()
             except Exception:
@@ -92,4 +93,9 @@ class ScheduleDatabase:
             documents=[{'id':r.id,'filename':r.filename,'term':json.loads(r.term),'model':r.model,'createdAt':iso(r.created_at)} for r in db.scalars(select(ScheduleDocument).order_by(ScheduleDocument.created_at.desc())).all()]
             records=[dict(json.loads(r.payload),id=r.id,documentId=r.document_id,termId=r.term_id) for r in db.scalars(select(ScheduleRecord).order_by(ScheduleRecord.term_id.desc(),ScheduleRecord.course_name)).all()]
             drafts=[{'id':r.id,'filename':r.filename,'status':r.status,'message':r.error} for r in db.scalars(select(ScheduleDraft).where(ScheduleDraft.status!='saved').order_by(ScheduleDraft.created_at.desc()).limit(10)).all()]
-        return {'documents':documents,'records':records,'drafts':drafts}
+            from .schedule_deletion import trash_page
+            trash=trash_page(db)
+        counts={}
+        for row in records:counts[row['documentId']]=counts.get(row['documentId'],0)+1
+        for row in documents:row['recordCount']=counts.get(row['id'],0)
+        return {'documents':documents,'records':records,'drafts':drafts,'trash':trash['items'],'trashNextCursor':trash['nextCursor']}

@@ -15,3 +15,15 @@ limit_conn_zone $binary_remote_addr zone=calculatorpro_connections:10m;
 # 登录接口的现有 location 中额外添加：
 # limit_req zone=calculatorpro_login burst=30 nodelay;
 # 学院内可能共用一个公网 IP，避免把阈值设得过低。
+
+# 教学日历的两个接口需覆盖 AI 和文件转换的等待时间。
+# 把同一 server 中现有代理 location 的 proxy_pass / proxy_set_header 配置复制进来。
+# location ~ ^/api/(teaching-calendar/(preview|generate)|courses/[0-9]+/teaching-calendar)$ {
+#     client_max_body_size 12m;
+#     proxy_read_timeout 240s;
+#     proxy_buffering off;  # 教学日历按阶段流式报告进度
+#     proxy_pass http://127.0.0.1:18090;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#     proxy_set_header X-Forwarded-Proto $scheme;
+# }

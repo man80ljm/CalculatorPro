@@ -14,7 +14,6 @@
       <p>正向计算、逆向推分、统计表和 AI 分析。课程文件夹保存在你的账号下。</p>
     </div>
     <div class="row-actions">
-      <span class="hint" id="who"></span>
       <button class="ghost" id="inviteBtn" type="button">我的邀请码</button>
       <button class="ghost" id="passwordBtn" type="button">修改密码</button>
       <button class="ghost" id="logoutBtn" type="button">退出</button>
@@ -94,8 +93,11 @@
           <div class="row-actions">
             <button type="button" id="syllabusBtn">从大纲建课</button>
             <button type="button" class="secondary" id="newCourseBtn">新建空白课程</button>
+            <button type="button" class="secondary" id="calendarBtn">教学日历</button>
+            <button type="button" class="secondary" id="lessonPlanBtn">课程教案</button>
             <button type="button" class="danger" id="deleteCourseBtn">删除</button>
           </div>
+          <p id="calendarError" class="form-error" role="alert" hidden></p>
         </div>
         <div id="termGroup">
           <h2 class="group-title">学期</h2>
@@ -343,13 +345,25 @@
             <div class="row-actions" style="margin-top:12px">
               <button type="button" id="syllabusReadBtn">读取大纲</button>
             </div>
-            <p class="hint" id="wizardWait" hidden>正在读取大纲，请稍候…</p>
+            <label class="field checkbox-row"><input type="checkbox" id="syllabusAllowCompletion" checked>允许 AI 纠错与补全</label>
+            <p class="hint">旧版格式会自动识别。开启后，AI 可补齐缺项并修正矛盾，结果可编辑。</p>
+            <div class="row-actions">
+              <button type="button" class="secondary" id="wizardSavedRead" hidden>补全当前课程已保存的大纲</button>
+              <button type="button" class="secondary" id="wizardResume" hidden>继续查看上次读取结果</button>
+            </div>
+            <div class="lp-task" id="wizardWait" role="status" hidden>
+              <p id="wizardReadStage">正在读取大纲，请稍候…</p>
+              <progress id="wizardReadProgress" max="100" value="0"></progress>
+              <p class="hint" id="wizardReadCounts"></p>
+            </div>
             <p class="hint" id="wizardError"></p>
           </div>
           <div id="wizardConfirm" hidden>
+            <p class="form-error" id="wizardCalendarNotice" role="status" hidden></p>
+            <div id="wizardCompletionNotice" class="hint" role="status" hidden></div>
             <p class="dlg-section">课程信息（各学期共用）</p>
             <div class="fields" id="wizardCourse"></div>
-            <p class="hint" id="wizardTermHint">任课教师、上课专业、上课班级、学年学期和人数不在这里填写，导入成绩登记表时写入该学期。</p>
+            <p class="hint" id="wizardTermHint">成绩分析的教师、班级在导入成绩登记表时写入该学期；教学日历与教案的授课信息另按课表或手填保存。</p>
             <label class="field">课程简介
               <textarea id="wizardDescription"></textarea>
             </label>
@@ -431,6 +445,75 @@
         </footer>
       </form>
     </dialog>
+    <dialog class="dlg dlg-wide" id="dlgLessonPlan" aria-labelledby="dlgLessonPlanTitle">
+      <div class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgLessonPlanTitle">生成课程教案</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <div id="lpSourcePanel" class="lp-source" hidden>
+            <label class="field" id="lpUploadField">教学大纲<input type="file" id="lpOutlineFile" accept=".docx"><span class="hint">仅接受 .docx，最多 5MB。原始文件会保存，之后可以复用。</span></label>
+            <p class="hint" id="lpSourceHint"></p>
+            <button type="button" id="lpReadOutline">上传大纲并继续</button>
+          </div>
+          <p id="lpLoading" class="hint" role="status" hidden>正在加载课程教案…</p>
+          <p id="lpError" class="form-error" role="alert" hidden></p>
+          <div id="lpEditor" hidden>
+            <div class="fields lp-meta" id="lpMetaFields"></div>
+            <label class="field" id="lpCourseMatchWrap" hidden>本学期课表中的对应课程（名称不同，请确认）<select id="lpCourseMatch"></select></label>
+            <label class="field" id="lpTeacherChoiceWrap" hidden>选择课表中的任课教师<select id="lpTeacherChoice"></select></label>
+            <p id="lpTeachingHint" class="hint" role="status"></p>
+            <datalist id="lpTeacherNames"></datalist>
+            <div class="row-actions">
+              <button type="button" class="secondary" id="lpUseManual">改为手动填写</button>
+              <button type="button" class="secondary" id="lpUseTimetable" hidden>恢复使用后台课表</button>
+            </div>
+            <p class="hint">首次生成每课调用 AI；字数不符最多自动重写一次。编辑后请保存修改，确认生成 Word 时也会保存。</p>
+            <div id="lpTaskPanel" class="lp-task" hidden><p id="lpTaskStage" role="status"></p><progress id="lpProgress" max="100" value="0" aria-label="课程教案生成进度"></progress><p class="hint" id="lpTaskCounts"></p></div>
+            <div class="lp-lesson-nav"><button type="button" class="secondary" id="lpPrevious">上一课次</button><label class="field">课次<select id="lpLessonSelect"></select></label><button type="button" class="secondary" id="lpNext">下一课次</button></div>
+            <p id="lpPageStatus" class="hint" role="status"></p>
+            <div class="lp-columns" id="lpLessonFields"></div>
+            <button type="button" class="secondary" id="lpCompress">压缩这一课次</button>
+            <details class="fold"><summary>学习资料、学习网站和课程评价方式</summary>
+              <div class="fields lp-resources"><label class="field">学习资料（每行一条）<textarea id="lpMaterials"></textarea></label><label class="field">学习网站（每行一条）<textarea id="lpWebsites"></textarea></label></div>
+              <div class="fields" id="lpEvaluation"></div>
+              <p class="hint">评价文字沿用原模板的字段，比例从大纲读取，可人工核对修改。</p>
+            </details>
+            <p id="lpWarnings" class="hint" role="status"></p>
+            <p id="lpDownloadHint" class="hint" hidden>Word 已生成。如自动下载未开始，请点击“下载 Word”。</p>
+          </div>
+        </div>
+        <footer class="dlg-foot lp-actions"><button type="button" class="secondary" data-close>关闭</button><button type="button" class="secondary" id="lpSave" disabled>保存修改</button><button type="button" class="secondary" id="lpCheck" disabled>检查页数</button><button type="button" id="lpGenerate" disabled>AI 生成教案</button><button type="button" id="lpExport" disabled>确认生成 Word</button><a id="lpDownload" class="calendar-download" hidden>下载 Word</a></footer>
+      </div>
+    </dialog>
+    <dialog class="dlg dlg-calendar" id="dlgCalendar" aria-labelledby="dlgCalendarTitle" aria-describedby="calendarStage">
+      <form method="dialog" class="dlg-inner">
+        <header class="dlg-head"><h2 id="dlgCalendarTitle">生成教学日历</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
+        <div class="dlg-body">
+          <div class="calendar-progress-head"><p id="calendarStage" role="status">正在准备课程资料…</p><strong id="calendarPercent">0%</strong></div>
+          <progress id="calendarProgress" max="100" value="0" aria-label="教学日历生成进度"></progress>
+          <ol class="calendar-steps" aria-label="处理阶段">
+            <li id="calendarStep0">准备资料</li><li id="calendarStep1">填写日历</li><li id="calendarStep2">生成文件</li><li id="calendarStep3">准备下载</li>
+          </ol>
+          <p class="hint" id="calendarElapsed">已等待 0 秒</p>
+          <p class="hint" id="calendarProgressHint">进度随处理阶段更新，生成文件时可能需要稍候。</p>
+          <p id="calendarFileName" class="calendar-file-name" hidden></p>
+          <p id="calendarDialogError" class="report-error" role="alert" hidden></p>
+          <div id="calendarCourseMatch" hidden>
+            <label class="field">课表中相近的课程名称<select id="calendarCourseChoice"></select></label>
+            <div class="row-actions"><button type="button" id="calendarChooseCourse" disabled>确认对应课程</button><button type="button" class="secondary" id="calendarSkipCourseMatch">不关联，继续生成</button></div>
+          </div>
+          <div id="calendarAssignment" hidden>
+            <label class="field">选择课表中的任课教师<select id="calendarTeacherChoice"></select></label>
+            <button type="button" id="calendarChooseTeacher" disabled>确认本学期教师并生成</button>
+          </div>
+          <p id="calendarDownloadHint" class="hint" hidden>已尝试自动下载。如果没看到文件，请点击“下载 .xls”，也可查看浏览器的下载列表。</p>
+        </div>
+        <footer class="dlg-foot">
+          <button type="button" class="secondary" data-close>关闭</button>
+          <button type="button" class="secondary" id="calendarRetry" hidden>重新生成</button>
+          <a class="calendar-download" id="calendarDownload" hidden>下载 .xls</a>
+        </footer>
+      </form>
+    </dialog>
     <dialog class="dlg" id="dlgReport" aria-labelledby="dlgReportTitle">
       <form method="dialog" class="dlg-inner">
         <header class="dlg-head"><h2 id="dlgReportTitle">生成报告</h2><button type="button" class="dlg-x" data-close aria-label="关闭">×</button></header>
@@ -489,5 +572,6 @@
   <footer class="note page-note"><span>课程和资料会保存在你的账号下。报告生成后，可以到课程资料中查看和下载。</span><button type="button" class="support-link" id="supportBtn" data-open="dlgSupport" hidden>请服务器喝杯咖啡 ☕</button></footer>
   <script src="/static/relation_grid.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/lesson_plans.js"></script>
 </body>
 </html>

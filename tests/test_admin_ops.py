@@ -271,18 +271,27 @@ def test_failed_job_records_short_error(app):
         assert "坏了" * 200 not in event["error"]
 
 
-def test_admin_writes_limited_to_invitations(app):
+def test_admin_writes_use_explicit_endpoint_allowlist(app):
     paths = _admin_routes(app)
     assert paths
     post_paths = set()
     for path, methods in paths:
         lowered = path.lower()
         for banned in _BANNED_PATH:
-            assert banned not in lowered
+            assert banned not in lowered or (banned == "delete" and path in {
+                "/admin/api/schedule/delete-preview", "/admin/api/schedule/delete"})
         assert not (_WRITE_METHODS & methods) or path in {"/admin/api/invites/{invitation_id}", "/admin/api/invites/{invitation_id:int}"}
         if "POST" in methods:
             post_paths.add(path)
-    assert post_paths == {"/admin/api/login", "/admin/api/logout", "/admin/api/invites", "/admin/api/settings", "/admin/api/settings/test", "/admin/api/schedule/analyze", "/admin/api/schedule/save", "/admin/api/schedule/record"}
+    assert post_paths == {
+        "/admin/api/login", "/admin/api/logout", "/admin/api/invites",
+        "/admin/api/settings", "/admin/api/settings/test",
+        "/admin/api/schedule/analyze", "/admin/api/schedule/save", "/admin/api/schedule/record",
+        "/admin/api/teachers/import/preview", "/admin/api/teachers/import/review",
+        "/admin/api/teachers/import/confirm", "/admin/api/teachers/record",
+        "/admin/api/teachers/status",
+        "/admin/api/schedule/delete-preview", "/admin/api/schedule/delete", "/admin/api/schedule/restore",
+    }
 
     with TestClient(app) as client:
         assert client.post("/admin/api/login", json={"username": "admin", "password": ADMIN_PASSWORD}).status_code == 200

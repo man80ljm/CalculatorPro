@@ -45,6 +45,7 @@ register_limiter = RateLimiter(max_calls=8, window_seconds=60)
 ai_limiter = RateLimiter(max_calls=30, window_seconds=60)
 # 建课读取按登录用户另计，和报告分开，避免误点刷额度。
 syllabus_limiter = RateLimiter(max_calls=20, window_seconds=60)
+calendar_ai_limiter = RateLimiter(max_calls=3, window_seconds=60)
 operation_limiter = RateLimiter(max_calls=120, window_seconds=60)
 
 
@@ -62,4 +63,5 @@ def reset_limiters() -> None:
     register_limiter.reset()
     ai_limiter.reset()
     syllabus_limiter.reset()
+    calendar_ai_limiter.reset()
     operation_limiter.reset()

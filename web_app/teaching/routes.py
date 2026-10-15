@@ -9,6 +9,7 @@ from web_app.admin_routes import _page,_require_admin,_require_invite_write,_no_
 from web_app.limiter import RateLimiter
 from .api_settings import ApiSettings,ApiError
 from .schedule_db import ScheduleDatabase
+from . import schedule_deletion
 from .pdf_schedule import PdfSchedule
 import json
 
@@ -52,6 +53,13 @@ def attach_teaching(application):
         if denied is not None:return denied
         try:return _no_store(JSONResponse(get_service().db.snapshot()))
         except SQLAlchemyError:return error(503,'数据库不可用。')
+    @application.get('/admin/api/schedule/trash')
+    def schedule_trash(request:Request):
+        denied=_require_admin(request)
+        if denied is not None:return denied
+        try:return _no_store(JSONResponse(schedule_deletion.list_trash(get_service().db,request.query_params.get('before'))))
+        except ApiError as exc:return error(exc.status,str(exc))
+        except SQLAlchemyError:return error(503,'数据库不可用。')
     @application.get('/admin/api/schedule/jobs/{identifier}')
     def job_get(identifier:str,request:Request):
         denied=_require_admin(request)
@@ -71,11 +79,17 @@ def attach_teaching(application):
     async def schedule_save(request:Request):return await write(request,'save')
     @application.post('/admin/api/schedule/record')
     async def schedule_edit(request:Request):return await write(request,'record')
+    @application.post('/admin/api/schedule/delete-preview')
+    async def schedule_delete_preview(request:Request):return await write(request,'delete-preview')
+    @application.post('/admin/api/schedule/delete')
+    async def schedule_delete(request:Request):return await write(request,'delete')
+    @application.post('/admin/api/schedule/restore')
+    async def schedule_restore(request:Request):return await write(request,'restore')
     async def write(request,operation):
         denied=_require_invite_write(request)
         if denied is not None:return denied
         try:
-            data=await body(request,12*1024*1024 if operation=='analyze' else 4*1024*1024 if operation in {'save','record'} else 16384)
+            data=await body(request,12*1024*1024 if operation=='analyze' else 4*1024*1024 if operation in {'save','record'} else 1024*1024 if operation in {'delete-preview','delete'} else 16384)
             token=request.cookies.get(ADMIN_COOKIE,'')
             if operation in {'settings','test'} and set(data)-{'source','model','key'}:raise ApiError('只可设置密钥来源、密钥和模型。')
             if operation=='test' and not tests.allow(token):raise ApiError('连接测试过于频繁，请稍后重试。',429)
@@ -85,7 +99,10 @@ def attach_teaching(application):
             elif operation=='test':payload=await asyncio.to_thread(value.settings.test,data)
             elif operation=='analyze':payload=await asyncio.to_thread(value.start,data)
             elif operation=='save':payload=await asyncio.to_thread(value.save,data)
+            elif operation=='delete-preview':payload=await asyncio.to_thread(schedule_deletion.preview_delete,value.db,data)
+            elif operation=='delete':payload=await asyncio.to_thread(schedule_deletion.delete,value.db,data)
+            elif operation=='restore':payload=await asyncio.to_thread(schedule_deletion.restore,value.db,data)
             else:payload=await asyncio.to_thread(value.edit,data)
             return _no_store(JSONResponse(payload,status_code=202 if operation=='analyze' else 200))
         except ApiError as exc:return error(exc.status,str(exc))
-        except SQLAlchemyError:return error(503,'数据库不可用，没有保存新的开课记录。')
+        except SQLAlchemyError:return error(503,'数据库不可用，操作未完成，请刷新后核对。')

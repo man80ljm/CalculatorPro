@@ -20,3 +20,5 @@ argon2-cffi>=23.1.0
 
 # API settings at rest; PDF dependencies already include this runtime.
 cryptography>=36.0.0
+
+pypdf>=4.0.0

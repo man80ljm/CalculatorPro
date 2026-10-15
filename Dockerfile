@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libreoffice-calc libreoffice-writer fonts-noto-cjk fonts-liberation fontconfig \
+    && fc-cache -f \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements-web.txt .
 RUN pip install --no-cache-dir -r requirements-web.txt \
     && useradd --create-home --uid 10001 appuser \

@@ -23,12 +23,13 @@ def _cell_text(cell) -> str:
 
 
 @limited_computation
-def docx_to_markdown(data: bytes) -> str:
+def docx_to_markdown(data: bytes, *, document=None) -> str:
     validate_document(data, "syllabus.docx")
-    try:
-        document = Document(io.BytesIO(data))
-    except Exception as exc:
-        raise DocumentError("无法读取这份 Word 文件，请确认它是 .docx。") from exc
+    if document is None:
+        try:
+            document = Document(io.BytesIO(data))
+        except Exception as exc:
+            raise DocumentError("无法读取这份 Word 文件，请确认它是 .docx。") from exc
     lines: list[str] = []
     table_index = 0
     for child in document.element.body.iterchildren():
